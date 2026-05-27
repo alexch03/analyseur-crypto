@@ -1,0 +1,3140 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Analyseur Crypto - Dashboard</title>
+  <style>
+    :root { --bg:#0f172a; --card:#111827; --muted:#94a3b8; --fg:#e5e7eb; --ok:#22c55e; --warn:#f59e0b; --err:#ef4444; --line:#1f2937; }
+    * { box-sizing:border-box; font-family: Inter, Segoe UI, Arial, sans-serif; }
+    body { margin:0; background:var(--bg); color:var(--fg); }
+    .wrap { max-width:1200px; margin:0 auto; padding:18px; }
+    .grid { display:grid; gap:14px; }
+    .g2 { grid-template-columns: repeat(2, minmax(0,1fr)); }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; }
+    .title { margin:0 0 8px; font-size:18px; }
+    label { display:block; margin:8px 0 4px; color:var(--muted); font-size:13px; }
+    input, textarea, select { width:100%; padding:9px; border-radius:8px; border:1px solid #334155; background:#0b1220; color:var(--fg); }
+    button { background:#1d4ed8; color:white; border:0; border-radius:8px; padding:10px 12px; cursor:pointer; margin-right:8px; margin-top:8px; }
+    button.secondary { background:#334155; }
+    button.good { background:#15803d; }
+    button.warn { background:#b45309; }
+    .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+    .badge { display:inline-block; padding:4px 8px; border-radius:999px; font-size:12px; }
+    .ok { background:rgba(34,197,94,.2); color:#86efac; }
+    .off { background:rgba(239,68,68,.2); color:#fca5a5; }
+    pre { white-space:pre-wrap; background:#020617; border:1px solid #1e293b; padding:10px; border-radius:8px; max-height:350px; overflow:auto; }
+    table { width:100%; border-collapse:collapse; }
+    th, td { text-align:left; padding:8px; border-bottom:1px solid #1f2937; font-size:13px; }
+    th { color:var(--muted); font-weight:600; }
+    .span2 { grid-column: 1 / -1; }
+    td.num, th.num { text-align:right; font-variant-numeric: tabular-nums; }
+    .tabs { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:4px; border-bottom:1px solid #334155; padding-bottom:0; }
+    .tab {
+      padding:10px 18px; border-radius:10px 10px 0 0; background:#1e293b; color:#94a3b8; cursor:pointer;
+      border:1px solid #334155; border-bottom:none; margin-bottom:-1px; font-size:14px;
+    }
+    .tab:hover { color:#e2e8f0; }
+    .tab.active { background:var(--card); color:#f1f5f9; border-bottom-color:var(--card); font-weight:600; }
+    .tab-panel { display:none; }
+    .tab-panel.active { display:block; }
+    .muted { color:#94a3b8; font-size:13px; line-height:1.5; }
+    textarea.code { min-height:320px; font-family: ui-monospace, Consolas, monospace; font-size:12px; line-height:1.45; }
+    .bot-hero { display:grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap:10px; margin-bottom:12px; }
+    .bot-tile { background:#0b1220; border:1px solid #334155; border-radius:10px; padding:10px 12px; }
+    .bot-tile .lab { font-size:11px; color:#94a3b8; text-transform:uppercase; letter-spacing:0.03em; }
+    .bot-tile .val { font-size:15px; font-weight:600; margin-top:5px; color:#f1f5f9; word-break:break-word; }
+    .bot-tile .sub { font-size:12px; color:#94a3b8; margin-top:4px; line-height:1.4; }
+    .method-sec { margin-top:14px; padding-top:12px; border-top:1px solid #334155; }
+    .method-sec:first-of-type { margin-top:10px; padding-top:0; border-top:0; }
+    .method-sec h3 { margin:0 0 10px; font-size:15px; color:#cbd5e1; font-weight:600; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1 style="margin:4px 0 10px;">Dashboard Local - Analyseur Crypto</h1>
+    <div class="tabs" role="tablist" aria-label="Navigation dashboard">
+      <button type="button" class="tab active" data-tab="tab-dash" role="tab" aria-selected="true">1 · Dashboard</button>
+      <button type="button" class="tab" data-tab="tab-simulation" role="tab" aria-selected="false">2 · Simulation</button>
+      <button type="button" class="tab" data-tab="tab-dataset" role="tab" aria-selected="false">3 · Dataset</button>
+      <button type="button" class="tab" data-tab="tab-methods" role="tab" aria-selected="false">4 · Méthodes</button>
+    </div>
+
+    <div id="tab-dash" class="tab-panel active" role="tabpanel">
+    <p class="muted" style="margin:0 0 12px;font-size:13px;">
+      <strong>Dashboard</strong> : <strong>Modèles</strong>, <strong>Paper live</strong> (méthode + démarrage), monitoring. Création / édition des profils JSON : <strong>Méthodes</strong>. Backtest / optimisation sur dataset : <strong>Simulation</strong>.
+    </p>
+
+    <section class="card" style="margin-bottom:14px;">
+      <h2 class="title">Modeles / Parametres / Stats</h2>
+      <p class="muted" style="margin:0 0 10px;font-size:13px;">
+        <strong>Registre</strong> : profils enregistrés (ex. top optimisation) — colonne <em>Stats</em> = dernier backtest de ce profil ou résumé issu de l&apos;optimisation.
+        <strong>Fichiers méthode</strong> : JSON sous <code>data/dashboard_methods/</code>. Deux idées distinctes : <em>modèle actif (registre)</em> = profil enregistré qu’on a cliqué « Activer » ; <em>JSON courant (workspace)</em> = fichier choisi dans la liste pour backtest/optim. Les deux peuvent être « oui » en même temps, sur des lignes différentes du tableau.
+      </p>
+      <div class="row">
+        <input id="newModelName" placeholder="Nom du modele (ex: BTC_4H_v1)" style="max-width:280px;" />
+        <button class="secondary" id="btnCreateFromOpt1">Creer depuis Top1 optimisation</button>
+        <button class="secondary" id="btnRefreshModels">Rafraichir</button>
+      </div>
+      <div style="overflow:auto; margin-top:8px;">
+        <table id="modelsTable">
+          <thead>
+            <tr>
+              <th>Nom</th><th>Modèle actif<br/><span style="font-weight:400;font-size:11px;color:#94a3b8">(registre)</span></th><th>JSON courant<br/><span style="font-weight:400;font-size:11px;color:#94a3b8">(workspace)</span></th><th>Paper</th><th>Parametres</th><th>Stats</th><th>Actions</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card" style="margin-bottom:14px;">
+      <h2 class="title">Paper live</h2>
+      <p class="muted" style="margin:0 0 10px;font-size:13px;">
+        Choisir une <strong>méthode</strong> JSON, réglez symbole / timeframe / intervalle si besoin, puis un seul bouton <strong>Démarrer / Arrêter</strong>. Les bougies viennent de l&apos;exchange en direct ; le journal ci-dessous = analyse SMC (pas des ordres réels).
+      </p>
+      <div class="grid g2">
+        <div class="span2">
+          <label>Méthode (JSON workspace)</label>
+          <select id="workspaceMethodSelect"></select>
+          <div class="row" style="margin-top:6px;">
+            <button type="button" class="secondary" id="btnMethodRefreshDash" title="Rafraîchir la liste des fichiers">Rafraîchir la liste</button>
+            <button type="button" class="secondary" data-go-tab="tab-methods">Éditer dans Méthodes</button>
+          </div>
+        </div>
+      </div>
+      <div
+        class="row"
+        style="align-items:center;flex-wrap:wrap;gap:12px;margin-top:12px;padding:12px 14px;background:#0f172a;border:1px solid #334155;border-radius:10px;"
+      >
+        <span id="paperRunStateBadge" class="badge off">Arrêté</span>
+        <span id="paperRunStateSub" class="muted" style="margin:0;flex:1;min-width:200px;font-size:13px;line-height:1.45;">
+          Chargement du statut…
+        </span>
+        <button type="button" class="good" id="btnPaperLiveToggle">Démarrer le run paper</button>
+      </div>
+      <div class="bot-hero" id="botLiveHero" style="margin-top:12px;">
+        <div class="bot-tile"><div class="lab">Boucle</div><div class="val" id="botTileRunning">—</div><div class="sub" id="botTileTask">tâche asyncio</div></div>
+        <div class="bot-tile"><div class="lab">Intervalle</div><div class="val" id="botTileInterval">—</div><div class="sub">poll bougies</div></div>
+        <div class="bot-tile"><div class="lab">Dernier tick</div><div class="val" id="botTileLastTick">—</div><div class="sub">heure locale suisse (Europe/Zurich)</div></div>
+        <div class="bot-tile"><div class="lab">Symbole / TF</div><div class="val" id="botTileSymTf">—</div></div>
+        <div class="bot-tile"><div class="lab">Bougies</div><div class="val" id="botTileBars">—</div></div>
+        <div class="bot-tile"><div class="lab">Tendance</div><div class="val" id="botTileTrend">—</div></div>
+        <div class="bot-tile"><div class="lab">Setups</div><div class="val" id="botTileSetups">—</div></div>
+        <div class="bot-tile"><div class="lab">Top setup</div><div class="val" id="botTileTopSetup">—</div></div>
+        <div class="bot-tile"><div class="lab">Méthode (trace)</div><div class="val" id="botTileMethod">—</div></div>
+        <div class="bot-tile"><div class="lab">PnL net cumulé (sim.)</div><div class="val" id="botTileEquity">—</div><div class="sub" id="botTileSessionNote">Position simulée ou dernier message d&apos;exécution.</div></div>
+      </div>
+      <p class="muted" style="margin:0 0 10px;font-size:12px;line-height:1.55;">
+        <strong>Source des bougies :</strong> uniquement <strong>l&apos;exchange (CCXT)</strong> — pas le CSV workspace. À chaque cycle le serveur télécharge une <strong>fenêtre de plusieurs centaines de bougies</strong> (glissante, avec la dernière clôture), puis lance l&apos;analyse SMC : tu as déjà l&apos;historique nécessaire pour les indicateurs ; chaque tick rafraîchit la fin de série.
+        Si symbole / TF paper sont vides, la boucle prend la <strong>1re entrée</strong> de <code>symbols</code> et <code>timeframes</code> dans ta méthode JSON.
+      </p>
+      <div class="grid g2">
+        <div>
+          <label>Symbole paper (optionnel)</label>
+          <input id="paperLiveSymbol" placeholder="ex. BTC/USDT ou vide = méthode" autocomplete="off" />
+        </div>
+        <div>
+          <label>Timeframe paper (optionnel)</label>
+          <input id="paperLiveTimeframe" placeholder="ex. 5m / 15m ou vide = méthode" autocomplete="off" />
+        </div>
+        <div>
+          <label>Intervalle (secondes)</label>
+          <input id="paperLiveInterval" type="number" min="15" max="600" value="90" />
+        </div>
+        <div>
+          <label>Backend exécution paper</label>
+          <select id="paperExecutionBackend" title="Même flux logique : demain branchement ordres Bitget derrière bitget_futures_sim.">
+            <option value="sim_replay">sim_replay — replay interne</option>
+            <option value="bitget_futures_sim">bitget_futures_sim — replay + métadonnées Bitget (export)</option>
+          </select>
+        </div>
+        <div>
+          <label>Exchange CCXT (bougies paper)</label>
+          <input id="paperOhlcvExchangeId" placeholder="vide = .env EXCHANGE_ID (ex. bitget)" maxlength="32" autocomplete="off" />
+        </div>
+        <div class="span2">
+          <button type="button" class="secondary" id="btnPaperLiveFillFromDataset">
+            Remplir symbole / TF depuis l&apos;onglet Dataset (backtest)
+          </button>
+        </div>
+      </div>
+      <p class="muted" style="margin:0 0 10px;font-size:12px;line-height:1.55;">
+        <strong>Bitget futures :</strong> mets <code>bitget</code> dans « Exchange CCXT » et le backend <code>bitget_futures_sim</code> pour que <strong>bougies + frais auto</strong> passent par Bitget comme en prod, tout en gardant la <strong>simulation replay</strong> pour les ordres. Enregistre (bouton run enregistre aussi ces champs) puis relance le run.
+      </p>
+      <h3 style="margin:14px 0 6px;font-size:15px;color:#cbd5e1;">Trades paper (simulation, 40 derniers)</h3>
+      <p class="muted" style="margin:0 0 8px;font-size:12px;">
+        <strong>Trades fictifs (même moteur que le backtest)</strong> : le <strong>signal</strong> est le top setup sur la <strong>dernière bougie</strong> ; l&apos;<strong>entrée</strong> n&apos;a lieu que si une bougie <strong>suivante</strong> touche le prix d&apos;entrée (comme le replay walk-forward). Les <strong>sorties</strong> (SL, TP, trailing, TIMEOUT max holding) et les <strong>frais / funding</strong> suivent l&apos;état Contrôle / Simulation. Ce n&apos;est <strong>pas</strong> relié à un compte exchange ni au carnet CCXT réel.
+      </p>
+      <p class="muted" style="margin:0 0 8px;font-size:12px;">
+        <strong>Telegram (paper)</strong> : avec bot + chat configurés (<code>.env</code>) et <code>paper_live_send_telegram</code> activé dans la méthode / l&apos;état, le serveur n&apos;envoie <strong>que</strong> les messages liés aux <strong>trades simulés</strong> (une notification à l&apos;<strong>entrée</strong> replay, une autre à la <strong>clôture</strong>) — plus de résumé SMC à chaque poll.
+      </p>
+      <div style="overflow:auto;max-height:260px;margin-bottom:16px;">
+        <table id="paperLiveTradeLogTable">
+          <thead>
+            <tr>
+              <th title="Horloge du tick serveur (ISO + affichage CH dans les infobulles du tableau ticks)">Tick (CH)</th>
+              <th title="Bougie où la sortie a été détectée">Sortie (barre)</th>
+              <th>Sym</th>
+              <th>TF</th>
+              <th>Side</th>
+              <th>Setup</th>
+              <th class="num">Entrée</th>
+              <th class="num">Sortie px</th>
+              <th>Issue</th>
+              <th class="num">PnL net</th>
+              <th class="num">Bars</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <h3 style="margin:14px 0 6px;font-size:15px;color:#cbd5e1;">Journal des ticks — analyse SMC (40 derniers)</h3>
+      <p class="muted" style="margin:0 0 8px;font-size:12px;">
+        Une ligne par <strong>cycle</strong> (poll + analyse) : tendance, nombre de setups, meilleur setup affiché. C&apos;est le « radar » SMC à chaque intervalle, pas la liste des ordres. Les <strong>trades simulés</strong> sont dans le tableau ci-dessus.
+      </p>
+      <div style="overflow:auto;max-height:280px;">
+        <table id="paperLiveTickLogTable">
+          <thead>
+            <tr>
+              <th title="Fuseau affiché : Europe/Zurich. Survole une ligne pour l&apos;horodatage ISO exact (UTC côté serveur).">Heure (CH)</th>
+              <th>Sym</th>
+              <th>TF</th>
+              <th class="num">Bars</th>
+              <th>Trend</th>
+              <th class="num">Setups</th>
+              <th>Top type</th>
+              <th>Side</th>
+              <th class="num">Conf</th>
+              <th class="num">RR</th>
+              <th class="num">Entry</th>
+              <th class="num">SL</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <label style="margin-top:10px;">Détail brut (API + erreurs)</label>
+      <pre id="paperLiveStatusPre" style="max-height:200px;">-</pre>
+    </section>
+
+    <section class="card">
+        <h2 class="title">Messages API</h2>
+        <pre id="output">Pret.</pre>
+    </section>
+    </div>
+
+    <div id="tab-simulation" class="tab-panel" role="tabpanel">
+      <section class="card" style="margin-bottom:14px;">
+        <h2 class="title">Contexte de simulation</h2>
+        <p class="muted" style="margin:0 0 10px;">
+          Les listes <strong>dataset</strong> et <strong>méthode</strong> sont dans les onglets Dataset et Méthodes ; le serveur enregistre la sélection tout seul. Symbole / timeframe pour le backtest : onglet Dataset. Pas besoin de « charger / sauver un état » ici pour un usage courant.
+        </p>
+        <div id="simSelectionSummary" class="muted" style="font-size:13px;line-height:1.6;padding:10px 12px;background:#0b1220;border-radius:8px;border:1px solid #334155;margin-bottom:10px;"></div>
+        <div class="row">
+          <button type="button" class="secondary" data-go-tab="tab-dataset">Ouvrir Dataset</button>
+          <button type="button" class="secondary" data-go-tab="tab-methods">Ouvrir Méthodes</button>
+        </div>
+      </section>
+
+      <section class="card" style="margin-bottom:14px;">
+        <h2 class="title">Tester la méthode (trades simulés)</h2>
+        <p id="simRunHint" class="muted" style="margin:0 0 12px;">
+          Choisir symbole / timeframe et source OHLCV (onglet <strong>Dataset</strong>), puis un fichier <strong>méthode</strong> JSON (liste workspace). <strong>Backtest</strong> rejoue la stratégie sur l&apos;historique chargé (positions simulées, frais, rapport de trades).
+          <strong>Optimisation</strong> explore la grille de paramètres ; le <strong>Top-1</strong> peut être écrit dans le JSON méthode si un fichier est sélectionné. Avant chaque run, les champs ci-dessous sont synchronisés avec le serveur.
+          Les blocs <strong>Dernière optimisation</strong> et <strong>Walk-forward</strong> indiquent ensuite <strong>quelle méthode</strong> et <strong>quelle source de bougies</strong> ont servi au run (symbole / TF = champs Dataset ci-dessus).
+        </p>
+        <div class="grid g2" style="margin-bottom:12px;">
+          <div>
+            <label>Objectif d&apos;optimisation</label>
+            <select id="simOptimizationObjective">
+              <option value="net_pnl_quote">net_pnl_quote (PnL net quote)</option>
+              <option value="penalized_pnl_quote">penalized_pnl_quote (PnL − pénalités DD / trades / PF)</option>
+              <option value="net_r">net_r</option>
+              <option value="profit_factor">profit_factor</option>
+              <option value="expectancy_r">expectancy_r</option>
+              <option value="sharpe_like">sharpe_like</option>
+              <option value="composite">composite</option>
+            </select>
+          </div>
+          <div>
+            <label>Stratégie de recherche</label>
+            <select id="simOptimizationStrategy">
+              <option value="exhaustive">exhaustive (grille complète)</option>
+              <option value="random">random</option>
+              <option value="coordinate_descent">coordinate_descent</option>
+            </select>
+          </div>
+        </div>
+        <div class="row" style="margin-top:4px;">
+          <button class="warn" id="btnBacktest">Lancer Backtest</button>
+          <button class="secondary" id="btnOptimize">Lancer Optimisation</button>
+        </div>
+        <div class="row" style="margin-top:8px;">
+          <button type="button" class="secondary" id="btnOptimizeWf">Optim. walk-forward (IS→OOS)</button>
+        </div>
+        <details class="muted" style="margin-top:14px;">
+          <summary style="cursor:pointer;color:#cbd5e1;">File d&apos;optimisations (plusieurs jobs séquentiels)</summary>
+          <p style="margin:8px 0 6px;font-size:13px;line-height:1.45;color:#94a3b8;">
+            Même symbole / timeframe que ci-dessus. Chaque job lit une méthode source (JSON workspace), optimise, puis enregistre une
+            <strong>nouvelle</strong> copie <code>nom__autoopt__…json</code> avec métriques Top‑1 (win rate, PnL, etc.). Le fichier source n&apos;est pas écrasé.
+          </p>
+          <label for="optBatchQueueJson">Corps JSON (liste <code>jobs</code>)</label>
+          <textarea id="optBatchQueueJson" spellcheck="false" style="width:100%;min-height:160px;font-family:ui-monospace,monospace;font-size:12px;"></textarea>
+          <div class="row" style="margin-top:8px;">
+            <button type="button" class="secondary" id="btnOptimizeBatch">Lancer la file d&apos;optimisations</button>
+          </div>
+        </details>
+        <p id="optimizationRunHint" class="muted" style="margin-top:10px;font-size:13px;line-height:1.45;"></p>
+      </section>
+
+      <div class="grid g2" style="margin-top:4px;">
+        <section class="card">
+          <h2 class="title">Dernier Backtest</h2>
+          <p class="muted" style="margin:0 0 8px;font-size:12px;">Rapport agrégé (trades, métriques) — JSON complet ci-dessous.</p>
+          <pre id="lastBacktest">-</pre>
+        </section>
+        <section class="card">
+          <h2 class="title">Dernière optimisation</h2>
+          <p id="optRunProvenance" class="muted" style="margin:0 0 10px;font-size:12px;line-height:1.55;white-space:pre-wrap;"></p>
+          <p id="optRankingHint" style="font-size:13px;color:#94a3b8;margin:0 0 10px;line-height:1.45;"></p>
+          <div style="overflow:auto;margin-bottom:8px;">
+            <table id="optimizationSummaryTable">
+              <thead>
+                <tr>
+                  <th>Rang</th>
+                  <th class="num">Win rate</th>
+                  <th class="num">Gains réalis.</th>
+                  <th class="num">Pertes réalis.</th>
+                  <th class="num">PnL net</th>
+                  <th class="num">Trades</th>
+                  <th class="num">PF</th>
+                  <th class="num">Max DD</th>
+                  <th>Paramètres</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <button type="button" class="secondary" id="btnExportOptCsv">Exporter résumé CSV</button>
+          <details style="margin-top:10px;"><summary>JSON brut optimisation</summary><pre id="lastOptimization" style="max-height:240px;">-</pre></details>
+        </section>
+      </div>
+
+      <section class="card" style="margin-top:14px;">
+        <h2 class="title">Walk-forward OOS (détail dernier run)</h2>
+        <p id="wfRunProvenance" class="muted" style="margin:0 0 10px;font-size:12px;line-height:1.55;white-space:pre-wrap;"></p>
+        <pre id="lastWfOos" style="max-height:280px;">-</pre>
+      </section>
+
+    </div>
+
+    <div id="tab-dataset" class="tab-panel" role="tabpanel">
+      <section class="card" style="margin-bottom:14px;">
+        <h2 class="title">Dataset — symbole, timeframe, historique</h2>
+        <p id="workspaceHint" class="muted" style="margin:0 0 12px;">
+          Choisis un CSV déjà présent dans la liste, ou <strong>crée-en un</strong> avec le bloc ci-dessous (une seule action principale). Les dossiers sont indiqués sous la liste après rafraîchissement.
+        </p>
+        <label>Fichier de données actif (OHLCV)</label>
+        <select id="workspaceDatasetSelect"></select>
+        <div class="row" style="margin-top:8px;">
+          <button type="button" class="secondary" id="btnWorkspaceRefresh">Rafraîchir les listes</button>
+        </div>
+        <p id="workspaceActiveLine" style="font-size:12px;color:#a5b4fc;margin-top:10px;"></p>
+
+        <h3 style="margin:18px 0 8px;font-size:15px;color:#e2e8f0;">Créer un dataset (recommandé)</h3>
+        <p class="muted" style="margin:0 0 10px;font-size:13px;">
+          Télécharge depuis l&apos;exchange (CCXT) et enregistre un CSV dans <code>data/dashboard_datasets/</code>, puis active ce fichier comme source. C&apos;est le flux le plus simple pour les backtests sur fichier.
+        </p>
+        <label>Symbole (ex. BTCUSDT ou BTC/USDT)</label>
+        <input id="actionSymbol" list="symbolDatalist" autocomplete="off" placeholder="BTC/USDT" />
+        <datalist id="symbolDatalist"></datalist>
+        <label style="margin-top:10px;">Timeframe</label>
+        <select id="actionTf"></select>
+
+        <div class="grid g2" style="margin-top:12px;">
+          <div>
+            <label>Jours d&apos;historique (calendaire, depuis maintenant)</label>
+            <input id="datasetCalendarDays" type="number" min="1" max="730" value="50" />
+            <div class="muted" style="margin-top:4px;">
+              ≈ <span id="datasetBarsPreview">—</span> bougies (jours → barres, plafonné 20&nbsp;000) si la cible ci-dessous est vide.
+            </div>
+          </div>
+          <div>
+            <label>Nom du fichier CSV (optionnel)</label>
+            <input id="datasetCsvFilename" placeholder="auto : SYM__tf__50d.csv" />
+            <div class="muted" style="margin-top:4px;">Laisse vide pour un nom généré (symbole normalisé + tf + jours).</div>
+          </div>
+        </div>
+        <div class="grid g2" style="margin-top:12px;">
+          <div>
+            <label>Cible bougies (optionnel, multi-requêtes)</label>
+            <input id="datasetTargetCandles" type="number" min="300" max="100000" step="100" placeholder="ex. 15000" />
+            <div class="muted" style="margin-top:4px;">
+              Si rempli, ignore le calcul « jours → bougies » et assemble jusqu&apos;à ce nombre (max 100&nbsp;000), en enchaînant les pages exchange (~1000/requête).
+            </div>
+          </div>
+          <div>
+            <label style="margin-top:0;"><input id="datasetMergeExisting" type="checkbox" style="width:auto;" /> Fusionner avec le CSV du même nom</label>
+            <div class="muted" style="margin-top:4px;">
+              Ajoute les nouvelles bougies au fichier existant (même basename), dédoublonnage par horodatage.
+            </div>
+          </div>
+        </div>
+
+        <div class="row" style="margin-top:14px;">
+          <button type="button" class="good" id="btnFetchDatasetWorkspace" data-default-label="Télécharger → CSV workspace">Télécharger → CSV workspace</button>
+        </div>
+        <div
+          id="datasetOperationStatus"
+          role="status"
+          aria-live="polite"
+          style="margin-top:12px;padding:12px 14px;border-radius:8px;border:1px solid #334155;background:#0f172a;font-size:13px;color:#cbd5e1;line-height:1.5;"
+        >
+          <strong>État</strong> : en attente. Renseigne symbole + timeframe, puis clique sur le bouton vert ci-dessus (durée variable selon l&apos;exchange).
+        </div>
+        <p class="muted" style="margin-top:10px;font-size:12px;">
+          Après succès : le CSV devient la source « fichier », les limites backtest/optim sont alignées sur le nombre de bougies reçues, et le résumé apparaît aussi dans « Dernier fetch » plus bas.
+        </p>
+        <p class="muted" style="margin-top:8px;padding:10px 12px;background:#0f172a;border-radius:8px;border:1px solid #334155;">
+          <strong>Période backtest / optim / WF</strong> : réglée dans l&apos;onglet <strong>Simulation</strong> (presets, plafond bougies, limites personnalisées).
+        </p>
+
+        <details style="margin-top:18px;border:1px solid #334155;border-radius:10px;padding:10px 12px;background:#0b1220;">
+          <summary style="cursor:pointer;color:#e2e8f0;font-weight:600;">Autres modes (live sans CSV workspace, PostgreSQL…)</summary>
+          <p id="ohlcvModeHelp" class="muted" style="margin:10px 0 10px;font-size:12px;"></p>
+          <p class="muted" style="margin:0 0 10px;font-size:12px;">
+            Ici le téléchargement suit le <strong>mode</strong> choisi dans la liste « Fichier de données actif » (live, CSV auto, base…), pas le flux « CSV workspace » du bouton vert.
+          </p>
+          <details style="margin-bottom:10px;">
+            <summary style="cursor:pointer;color:#94a3b8;font-size:12px;">Origine legacy (sync avec liste)</summary>
+            <label>Origine (backtest_ohlcv_source)</label>
+            <select id="backtestOhlcvSource">
+              <option value="live">live</option>
+              <option value="file">file</option>
+              <option value="database">database</option>
+            </select>
+          </details>
+          <div class="row" style="margin-top:10px;flex-wrap:wrap;gap:8px;">
+            <button type="button" id="btnFetchOhlcv" data-default-label="Télécharger (mode liste + CCXT)">Télécharger (mode liste + CCXT)</button>
+            <button type="button" class="secondary" id="btnOhlcvStatus">Voir statut fichier / base</button>
+          </div>
+          <details style="margin-top:10px;font-size:12px;color:#94a3b8;">
+            <summary style="cursor:pointer;color:#cbd5e1;">Option PostgreSQL</summary>
+            <label style="display:block;margin-top:8px;">
+              <input id="ohlcvDualWrite" type="checkbox" style="width:auto;" />
+              En mode base, écrire aussi un CSV (copie)
+            </label>
+          </details>
+        </details>
+
+        <label style="margin-top:16px;display:block;">Détail statut données (diagnostic)</label>
+        <pre id="ohlcvDataStatus" style="max-height:200px;">-</pre>
+        <label style="margin-top:10px;display:block;">Dernier fetch (résumé JSON)</label>
+        <pre id="lastOhlcvFetch" style="max-height:200px;">-</pre>
+
+        <details style="margin-top:14px;font-size:12px;color:#94a3b8;line-height:1.55;">
+          <summary style="cursor:pointer;color:#e2e8f0;">Comment le bot choisit un trade</summary>
+          <ul style="margin:8px 0 0 18px;padding:0;">
+            <li>Pipeline SMC : swings, S/R, BOS/CHOCH, FVG, order blocks ; setups classés par score.</li>
+            <li>Replay : SL/TP touchés ou timeout <code>max_holding_bars</code> ; trailing optionnel.</li>
+          </ul>
+        </details>
+      </section>
+    </div>
+
+    <div id="tab-methods" class="tab-panel" role="tabpanel">
+      <section class="card" style="margin-bottom:14px;border:1px solid #6366f1;background:linear-gradient(165deg,#1e1b4b 0%,#0f172a 55%);">
+        <h2 class="title" style="margin-bottom:6px;">Assistant méthode</h2>
+        <p class="muted" style="margin:0 0 12px;font-size:13px;">
+          Parcours court : nom + marché, le reste reprend les <strong>valeurs par défaut</strong> du gabarit. Tu peux toujours ouvrir les réglages détaillés plus bas.
+        </p>
+        <div id="wizMode" class="wiz-block">
+          <p style="margin:0 0 10px;color:#e2e8f0;">Que veux-tu faire ?</p>
+          <div class="row" style="flex-wrap:wrap;gap:8px;">
+            <button type="button" class="good" id="wizBtnNew">Nouvelle méthode</button>
+            <button type="button" class="secondary" id="wizBtnEdit">Modifier une méthode existante</button>
+          </div>
+        </div>
+        <div id="wizNew" class="wiz-block" style="display:none;">
+          <p id="wizNewHint" class="muted" style="margin:0 0 10px;font-size:12px;"></p>
+          <div id="wizNewStep1" class="wiz-step">
+            <label><strong>1.</strong> Nom du fichier (sans chemin)</label>
+            <input id="wizNewName" type="text" placeholder="ex: btc_15m_v1" autocomplete="off" style="max-width:320px;" />
+            <div class="row" style="margin-top:10px;">
+              <button type="button" class="good" id="wizNewNext1">Suivant</button>
+              <button type="button" class="secondary" id="wizNewBack0">Retour</button>
+            </div>
+          </div>
+          <div id="wizNewStep2" class="wiz-step" style="display:none;">
+            <label><strong>2.</strong> Symboles (séparés par des virgules)</label>
+            <input id="wizNewSymbols" type="text" placeholder="BTC/USDT" style="max-width:420px;" />
+            <div class="row" style="margin-top:10px;">
+              <button type="button" class="good" id="wizNewNext2">Suivant</button>
+              <button type="button" class="secondary" id="wizNewBack1">Retour</button>
+            </div>
+          </div>
+          <div id="wizNewStep3" class="wiz-step" style="display:none;">
+            <label><strong>3.</strong> Timeframes (CSV)</label>
+            <input id="wizNewTfs" type="text" placeholder="5m,15m,1h" style="max-width:320px;" />
+            <div class="row" style="margin-top:10px;">
+              <button type="button" class="good" id="wizNewNext3">Suivant</button>
+              <button type="button" class="secondary" id="wizNewBack2">Retour</button>
+            </div>
+          </div>
+          <div id="wizNewStep4" class="wiz-step" style="display:none;">
+            <p style="margin:0 0 8px;color:#cbd5e1;font-size:13px;"><strong>4.</strong> Style de profil (moteur SMC — tu pourras tout affiner après)</p>
+            <label style="display:block;margin:6px 0;"><input type="radio" name="wizProfile" value="balanced" checked style="width:auto;margin-right:8px;" /> Équilibré (défaut gabarit)</label>
+            <label style="display:block;margin:6px 0;"><input type="radio" name="wizProfile" value="prudent" style="width:auto;margin-right:8px;" /> Plus prudent (RR plus haut, proximités plus strictes)</label>
+            <label style="display:block;margin:6px 0;"><input type="radio" name="wizProfile" value="aggressive" style="width:auto;margin-right:8px;" /> Plus offensif (RR plus bas, entrées plus larges)</label>
+            <div class="row" style="margin-top:12px;">
+              <button type="button" class="good" id="wizNewNext4">Voir le résumé</button>
+              <button type="button" class="secondary" id="wizNewBack3">Retour</button>
+            </div>
+          </div>
+          <div id="wizNewStep5" class="wiz-step" style="display:none;">
+            <p style="margin:0 0 8px;color:#cbd5e1;"><strong>Résumé</strong></p>
+            <pre id="wizNewSummary" class="code" style="max-height:200px;font-size:11px;"></pre>
+            <div class="row" style="margin-top:12px;">
+              <button type="button" class="good" id="wizNewSave">Créer et enregistrer</button>
+              <button type="button" class="secondary" id="wizNewBack4">Retour</button>
+            </div>
+          </div>
+        </div>
+        <div id="wizEdit" class="wiz-block" style="display:none;">
+          <label>Choisir un fichier <code>.json</code> du dossier méthodes</label>
+          <select id="wizardMethodExistingSelect" style="max-width:420px;margin-top:6px;"></select>
+          <div class="row" style="margin-top:12px;">
+            <button type="button" class="good" id="wizEditLoad">Charger dans l&apos;éditeur</button>
+            <button type="button" id="wizEditSave">Sauvegarder (écrase le fichier)</button>
+            <button type="button" class="secondary" id="wizEditOpenAdvanced">Ouvrir réglages détaillés</button>
+            <button type="button" class="secondary" id="wizEditBack">Retour</button>
+          </div>
+          <p class="muted" style="margin:10px 0 0;font-size:12px;">Après chargement, tu peux modifier les champs dans la section dépliable ci-dessous puis <strong>Sauvegarder le fichier</strong>.</p>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2 class="title">Méthodes — créer / éditer un profil</h2>
+        <p class="muted" style="margin:0 0 14px;">
+          Enregistrement local dans <code>data/dashboard_methods/</code> (fusion avec l&apos;état au run). Le fichier actif se choisit sur le <strong>Dashboard → Paper live</strong> ou la table <strong>Modèles</strong> (ligne JSON). L&apos;<strong>assistant</strong> (ci-dessus) suffit pour la plupart des cas.
+        </p>
+        <p id="methodsActiveMethodLine" class="muted" style="margin:0 0 10px;font-size:13px;">
+          Fichier actif sur le Dashboard : <strong id="methodsActiveMethodName">—</strong>
+        </p>
+        <div class="row" style="margin-top:8px;">
+          <button type="button" class="secondary" id="btnMethodRefresh">Rafraîchir les listes</button>
+        </div>
+        <p id="methodsFilesHint" class="muted" style="margin-top:8px;font-size:12px;line-height:1.45;">
+          Les fichiers listés viennent du dossier <code>data/dashboard_methods/</code> à la racine du projet (chemin exact après rafraîchissement).
+        </p>
+        <label style="margin-top:12px;">Nom pour « Enregistrer sous »</label>
+        <input id="methodSaveFilename" placeholder="ma_methode.json" autocomplete="off" />
+
+        <details id="methodAdvancedBlock" style="margin-top:14px;border:1px solid #334155;border-radius:10px;padding:10px 12px;background:#0b1220;">
+          <summary style="cursor:pointer;color:#e2e8f0;font-weight:600;">Réglages détaillés (optionnel)</summary>
+          <p class="muted" style="margin:8px 0 12px;font-size:12px;">Tous les paramètres : identiques à avant ; replie cette zone pour garder l&apos;interface simple.</p>
+
+        <div class="method-sec">
+          <h3>Notifications</h3>
+          <label><input id="methodFormTelegram" type="checkbox" style="width:auto;" /> Telegram actif (même réglage que pour les runs)</label>
+        </div>
+
+        <div class="method-sec">
+          <h3>Période backtest / optim / walk-forward</h3>
+          <p class="muted" style="margin:0 0 8px;font-size:12px;">
+            <strong>Personnalisé</strong> : la limite réelle vient des champs « Backtest / Optim (bougies) » ci-dessous.
+            Les presets en jours servent surtout au <strong>live</strong>, à la <strong>base PostgreSQL</strong> ou au <strong>CSV auto</strong> (tronqués par le plafond).
+            Un <strong>CSV workspace</strong> plus court que la limite : tout le fichier est utilisé.
+          </p>
+          <div class="grid g2">
+            <div class="span2">
+              <label>Période (preset)</label>
+              <select id="analysisPeriodPreset">
+                <option value="custom">Personnalisé (nombre de bougies)</option>
+                <option value="7d">7 jours</option>
+                <option value="30d">30 jours</option>
+                <option value="90d">90 jours</option>
+                <option value="180d">180 jours</option>
+                <option value="365d">365 jours</option>
+              </select>
+            </div>
+            <div>
+              <label>Plafond bougies (max période analyse)</label>
+              <input
+                id="periodMaxBars"
+                type="number"
+                title="Presets calendaires (7d, 30d, …) et sources live/DB/CSV auto : plafond de bougies. Un CSV workspace (onglet Dataset) charge tout le fichier sans utiliser ce plafond ni les champs Backtest/Optim (sauf limite technique ~350k lignes)."
+              />
+            </div>
+            <div>
+              <label>Top optimisation (rang max)</label>
+              <input id="topOptimization" type="number" min="1" max="20" />
+            </div>
+            <div>
+              <label>WF splits (OOS)</label>
+              <input id="wfSplits" type="number" min="1" max="12" />
+            </div>
+            <div id="customBacktestCell">
+              <label>Backtest (bougies)</label>
+              <input id="backtestLimit" type="number" />
+            </div>
+            <div id="customOptimizeCell">
+              <label>Optimisation (bougies)</label>
+              <input id="optimizeLimit" type="number" />
+            </div>
+          </div>
+          <div id="periodWindowHint" style="font-size:12px;color:#c7d2fe;margin-top:10px;line-height:1.55;padding:10px 12px;background:#0f172a;border-radius:8px;border:1px solid #334155;">
+            Aperçu fenêtre : charge l&apos;état ou change le timeframe (Dataset) pour mettre à jour.
+          </div>
+        </div>
+
+        <div class="method-sec">
+          <h3>Scan &amp; bougies</h3>
+          <div class="grid g2">
+            <div class="span2">
+              <label>Symbols (CSV)</label>
+              <input id="methodFormSymbols" placeholder="BTC/USDT,ETH/USDT" />
+            </div>
+            <div class="span2">
+              <label>Timeframes (CSV)</label>
+              <input id="methodFormTimeframes" placeholder="5m,15m,1h,4h" />
+            </div>
+            <div>
+              <label>Scan limit (bougies)</label>
+              <input id="methodFormScanLimit" type="number" min="100" max="5000" placeholder="500" />
+            </div>
+          </div>
+        </div>
+
+        <div class="method-sec">
+          <h3>Moteur SMC</h3>
+          <div class="grid g2">
+            <div><label>rr_min</label><input id="methodFormRrMin" type="number" step="0.1" /></div>
+            <div><label>fvg_proximity_pct</label><input id="methodFormFvgProx" type="number" step="0.001" /></div>
+            <div><label>ob_proximity_pct</label><input id="methodFormObProx" type="number" step="0.001" /></div>
+            <div><label>max_setups</label><input id="methodFormMaxSetups" type="number" /></div>
+            <div><label>swing_left</label><input id="methodFormSwingLeft" type="number" /></div>
+            <div><label>swing_right</label><input id="methodFormSwingRight" type="number" /></div>
+          </div>
+        </div>
+
+        <div class="method-sec">
+          <h3>Position &amp; frais</h3>
+          <div class="grid g2">
+            <div><label>unit_size</label><input id="methodFormUnitSize" type="number" step="0.01" /></div>
+            <div><label>entry_fee_rate</label><input id="methodFormEntryFee" type="number" step="0.00001" /></div>
+            <div><label>exit_fee_rate</label><input id="methodFormExitFee" type="number" step="0.00001" /></div>
+            <div><label>funding_rate_8h</label><input id="methodFormFunding8h" type="number" step="0.000001" /></div>
+            <div class="span2">
+              <label><input id="methodFormAutoFee" type="checkbox" style="width:auto;" /> auto_fee_from_exchange (CCXT)</label>
+              <label style="margin-top:8px;"><input id="methodFormAutoFunding" type="checkbox" style="width:auto;" /> auto_funding_from_exchange</label>
+              <label style="margin-top:8px;">fee_market_type</label>
+              <select id="methodFormFeeMarket">
+                <option value="swap">swap (perp)</option>
+                <option value="spot">spot</option>
+              </select>
+              <div class="row" style="margin-top:8px;">
+                <button type="button" class="secondary" id="btnExchangeFees">Aperçu frais + funding (symbole onglet Dataset)</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="method-sec">
+          <h3>Replay &amp; filtres</h3>
+          <div class="grid g2">
+            <div><label>replay_trail_after_r</label><input id="methodFormReplayTrailR" type="number" step="0.1" /></div>
+            <div><label>replay_trail_atr_mult</label><input id="methodFormReplayTrailAtr" type="number" step="0.1" /></div>
+            <div><label>replay_trail_atr_period</label><input id="methodFormReplayTrailAtrPeriod" type="number" min="2" /></div>
+            <div class="span2">
+              <label><input id="methodFormRequireIfvg" type="checkbox" style="width:auto;" /> require_ifvg_confluence</label>
+              <label style="margin-top:8px;">ifvg_confluence_pct</label>
+              <input id="methodFormIfvgPct" type="number" step="0.001" />
+            </div>
+            <div class="span2">
+              <label><input id="methodFormRequireRsiDiv" type="checkbox" style="width:auto;" /> require_rsi_divergence</label>
+            </div>
+            <div><label>training_bars</label><input id="methodFormTrainingBars" type="number" /></div>
+            <div><label>max_holding_bars</label><input id="methodFormMaxHoldingBars" type="number" /></div>
+            <div class="span2">
+              <label><input id="methodFormAutoParameters" type="checkbox" style="width:auto;" checked /> auto_parameters (décocher pour forcer le moteur ci-dessus)</label>
+            </div>
+          </div>
+        </div>
+
+        <div class="method-sec">
+          <h3>Optimisation</h3>
+          <div class="grid g2">
+            <div>
+              <label>optimization_objective</label>
+              <select id="methodFormOptObjective">
+                <option value="net_pnl_quote">net_pnl_quote</option>
+                <option value="penalized_pnl_quote">penalized_pnl_quote</option>
+                <option value="net_r">net_r</option>
+                <option value="profit_factor">profit_factor</option>
+                <option value="expectancy_r">expectancy_r</option>
+                <option value="sharpe_like">sharpe_like</option>
+                <option value="composite">composite</option>
+              </select>
+            </div>
+            <div>
+              <label>optimization_strategy</label>
+              <select id="methodFormOptStrategy">
+                <option value="exhaustive">exhaustive</option>
+                <option value="random">random</option>
+                <option value="coordinate_descent">coordinate_descent</option>
+              </select>
+            </div>
+            <div>
+              <label>optimization_max_trials (random)</label>
+              <input id="methodFormMaxTrials" type="number" min="10" max="10000" step="10" />
+            </div>
+          </div>
+          <details style="margin-top:10px;font-size:13px;color:#94a3b8;">
+            <summary style="cursor:pointer;color:#cbd5e1;">Grille (valeurs CSV)</summary>
+            <div class="grid g2" style="margin-top:10px;">
+              <div><label>rr_min_values</label><input id="methodFormGridRr" placeholder="1.5,2.0,2.5" /></div>
+              <div><label>fvg_proximity_values</label><input id="methodFormGridFvg" placeholder="0.003,0.005" /></div>
+              <div><label>ob_proximity_values</label><input id="methodFormGridOb" /></div>
+              <div><label>swing_left_values</label><input id="methodFormGridSwingL" /></div>
+              <div><label>swing_right_values</label><input id="methodFormGridSwingR" /></div>
+              <div><label>max_setups_values</label><input id="methodFormGridMaxSetups" /></div>
+            </div>
+          </details>
+        </div>
+
+        </details>
+
+        <div class="row" style="margin-top:16px;">
+          <button type="button" class="secondary" id="btnMethodNew">Nouveau (gabarit)</button>
+          <button type="button" class="secondary" id="btnMethodLoad">Charger la sélection</button>
+          <button type="button" id="btnMethodSave">Sauvegarder le fichier</button>
+          <button type="button" class="good" id="btnMethodSaveAs">Enregistrer sous…</button>
+        </div>
+
+        <details style="margin-top:16px;border:1px solid #334155;border-radius:10px;padding:10px 12px;background:#0b1220;">
+          <summary style="cursor:pointer;color:#e2e8f0;font-weight:600;">JSON brut (sync avec le formulaire)</summary>
+          <p class="muted" style="margin:8px 0 10px;">
+            Les boutons <strong>Mettre à jour le JSON depuis le formulaire</strong> / <strong>Appliquer JSON → formulaire</strong> gardent les clés hors formulaire si tu en ajoutes à la main.
+          </p>
+          <textarea id="methodJsonEditor" class="code" style="min-height:220px;" spellcheck="false">{}</textarea>
+          <div class="row" style="margin-top:8px;">
+            <button type="button" class="secondary" id="btnMethodFormToJson">Mettre à jour le JSON depuis le formulaire</button>
+            <button type="button" class="secondary" id="btnMethodJsonToForm">Appliquer JSON → formulaire</button>
+            <button type="button" class="secondary" id="btnMethodFormatJson">Formater seulement</button>
+          </div>
+        </details>
+      </section>
+    </div>
+
+  </div>
+
+  <script>
+    /** Aligné sur control_state.DEFAULT_ANALYSIS_PERIOD_PRESET (Python). */
+    const DEFAULT_ANALYSIS_PERIOD_PRESET = 'custom';
+
+    /** Affichage horaire côté navigateur : heure locale suisse (Europe/Zurich). Les API restent en ISO (souvent UTC). */
+    const DISPLAY_TIME_ZONE = 'Europe/Zurich';
+    const DISPLAY_LOCALE = 'fr-CH';
+
+    function isProbablyIsoInstant(s){
+      if (typeof s !== 'string') return false;
+      const t = s.trim();
+      if (t.length < 19) return false;
+      if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(t)) return false;
+      return !Number.isNaN(Date.parse(t));
+    }
+
+    function formatIsoDisplayCh(iso){
+      if (iso == null || iso === '') return '—';
+      const raw = String(iso).trim();
+      const ms = Date.parse(raw);
+      if (Number.isNaN(ms)) return raw;
+      const d = new Date(ms);
+      try {
+        return new Intl.DateTimeFormat(DISPLAY_LOCALE, {
+          weekday: 'short',
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: false,
+          timeZone: DISPLAY_TIME_ZONE,
+        }).format(d);
+      } catch (_) {
+        return raw;
+      }
+    }
+
+    function jsonStringifyWithLocalTimes(value){
+      try {
+        return JSON.stringify(value, (_k, val) => {
+          if (typeof val === 'string' && isProbablyIsoInstant(val)) {
+            return val + '  ·  ' + formatIsoDisplayCh(val);
+          }
+          return val;
+        }, 2);
+      } catch (_) {
+        try {
+          return JSON.stringify(value, null, 2);
+        } catch (e2) {
+          return String(value);
+        }
+      }
+    }
+
+    const out = (msg) =>
+      (document.getElementById('output').textContent =
+        typeof msg === 'string' ? msg : jsonStringifyWithLocalTimes(msg));
+    const headers = () => ({'Content-Type':'application/json'});
+    const toCsvArray = (v) => v.split(',').map(s => s.trim()).filter(Boolean);
+    const toNumCsv = (v) => v.split(',').map(s => Number(s.trim())).filter(n => !Number.isNaN(n));
+    function parseFloatOrNull(id){
+      const el = document.getElementById(id);
+      if (!el) return null;
+      const v = el.value.trim();
+      if (v === '') return null;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    }
+    function setOptNum(id, val){
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.value = (val != null && val !== '') ? val : '';
+    }
+
+    function paperLivePatch(){
+      const symEl = document.getElementById('paperLiveSymbol');
+      const tfEl = document.getElementById('paperLiveTimeframe');
+      const ivEl = document.getElementById('paperLiveInterval');
+      const beEl = document.getElementById('paperExecutionBackend');
+      const oxEl = document.getElementById('paperOhlcvExchangeId');
+      const sym = symEl ? symEl.value.trim() : '';
+      const tf = tfEl ? tfEl.value.trim() : '';
+      const iv = ivEl ? Number(ivEl.value) || 90 : 90;
+      const backend = beEl && beEl.value ? String(beEl.value).trim().toLowerCase() : 'sim_replay';
+      const ox = oxEl ? oxEl.value.trim().toLowerCase() : '';
+      return {
+        paper_live_symbol: sym || null,
+        paper_live_timeframe: tf || null,
+        paper_live_interval_sec: Math.max(15, Math.min(600, iv)),
+        paper_execution_backend: backend === 'bitget_futures_sim' ? 'bitget_futures_sim' : 'sim_replay',
+        paper_ohlcv_exchange_id: ox || null,
+      };
+    }
+
+    async function refreshPaperLiveStatusPre(){
+      const el = document.getElementById('paperLiveStatusPre');
+      if (!el) return null;
+      try {
+        const res = await fetch('/api/v1/control/paper-live/status');
+        const j = await res.json();
+        el.textContent = jsonStringifyWithLocalTimes(j);
+        renderPaperLiveDashboard({
+          enabled: j.enabled,
+          paper_live_running: j.paper_live_running,
+          task_alive: j.task_alive,
+          paper_live_interval_sec: j.paper_live_interval_sec,
+          paper_live_symbol: j.paper_live_symbol,
+          paper_live_timeframe: j.paper_live_timeframe,
+          paper_execution_backend: j.paper_execution_backend,
+          paper_ohlcv_exchange_id: j.paper_ohlcv_exchange_id,
+          effective_symbol: j.effective_symbol,
+          effective_timeframe: j.effective_timeframe,
+          paper_live: j.paper_live || {},
+        });
+        return j;
+      } catch (e) {
+        el.textContent = String(e);
+        return null;
+      }
+    }
+
+    async function persistPaperLiveSettings(){
+      const res = await fetch('/api/v1/control/state', {
+        method: 'PUT',
+        headers: headers(),
+        body: JSON.stringify(paperLivePatch()),
+      });
+      if (!res.ok) {
+        out(await res.json());
+        return false;
+      }
+      return true;
+    }
+
+    function syncPaperLiveFromDatasetIfEmpty(){
+      const ps = document.getElementById('paperLiveSymbol');
+      const pt = document.getElementById('paperLiveTimeframe');
+      const ds = document.getElementById('actionSymbol');
+      const dt = document.getElementById('actionTf');
+      if (!ps || !pt || !ds || !dt) return;
+      const a = String(ds.value || '').trim();
+      const t = String(dt.value || '').trim();
+      if (!String(ps.value || '').trim() && a) ps.value = a;
+      if (!String(pt.value || '').trim() && t) pt.value = t;
+    }
+
+    function syncPaperLiveFromDataset(){
+      const ps = document.getElementById('paperLiveSymbol');
+      const pt = document.getElementById('paperLiveTimeframe');
+      const ds = document.getElementById('actionSymbol');
+      const dt = document.getElementById('actionTf');
+      if (!ps || !pt || !ds || !dt) return;
+      const a = String(ds.value || '').trim();
+      const t = String(dt.value || '').trim();
+      if (!a || !t) {
+        out({
+          attention:
+            'Renseigne le symbole et le timeframe sur l\'onglet Dataset (en haut de la page), puis réessaie.',
+        });
+        return;
+      }
+      ps.value = a;
+      pt.value = t;
+      out({ message: 'Symbole / TF paper alignés sur le Dataset.', symbole: a, timeframe: t });
+    }
+
+    function mapWorkspaceToLegacySrc(ds){
+      if (!ds) return 'live';
+      if (ds === '__live__') return 'live';
+      if (ds === '__database__') return 'database';
+      if (ds === '__auto_csv__' || /\.csv$/i.test(ds)) return 'file';
+      return 'file';
+    }
+
+    function updateWorkspaceActiveLine(){
+      const dsEl = document.getElementById('workspaceDatasetSelect');
+      const mfEl = document.getElementById('workspaceMethodSelect');
+      if (!dsEl || !mfEl) return;
+      const ds = dsEl.value;
+      const mf = mfEl.value;
+      const text =
+        'Sélection persistée : données = ' + ds + (mf ? ' · méthode = ' + mf : ' · méthode = aucune');
+      const w = document.getElementById('workspaceActiveLine');
+      if (w) w.textContent = text;
+      const mfName = document.getElementById('methodsActiveMethodName');
+      if (mfName) {
+        const v = mfEl.value;
+        mfName.textContent = v || 'aucun';
+      }
+      const sim = document.getElementById('simSelectionSummary');
+      if (sim) {
+        const symEl = document.getElementById('actionSymbol');
+        const tfEl = document.getElementById('actionTf');
+        const sym = symEl && symEl.value ? symEl.value.trim() : '—';
+        const tf = tfEl && tfEl.value ? tfEl.value.trim() : '—';
+        sim.innerHTML =
+          '<div><strong>Dataset</strong> : ' +
+          escapeHtml(ds) +
+          '</div><div style="margin-top:6px;"><strong>Méthode JSON</strong> : ' +
+          escapeHtml(mf || 'aucune') +
+          '</div><div style="margin-top:6px;"><strong>Symbole / TF</strong> (backtest) : ' +
+          escapeHtml(sym) +
+          ' · ' +
+          escapeHtml(tf) +
+          '</div>';
+      }
+    }
+
+    function escapeHtml(s){
+      return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    /** Même convention que le backend : STEM__tf__Nd.csv → symbole CCXT + timeframe. */
+    const _WS_QUOTES_DESC = ['FDUSD','USDT','USDC','BUSD','TUSD','DAI','USDE','EUR','GBP','USD','BTC','ETH','BNB','SOL'];
+    function stemToCcxtFromDatasetStem(stem){
+      const upper = String(stem || '').toUpperCase();
+      const known = _WS_QUOTES_DESC.slice().sort((a,b)=>b.length-a.length);
+      for (let qi = 0; qi < known.length; qi++){
+        const q = known[qi];
+        const su = '_' + q;
+        if (upper.endsWith(su)) {
+          const base = String(stem).slice(0, -su.length);
+          return base ? base + '/' + q : null;
+        }
+      }
+      const s = String(stem || '');
+      const i = s.lastIndexOf('_');
+      if (i <= 0) return null;
+      const base = s.slice(0, i);
+      const quote = s.slice(i + 1);
+      if (quote.length < 2 || quote.length > 10) return null;
+      return base + '/' + quote.toUpperCase();
+    }
+    function parseWorkspaceDatasetFilename(name){
+      const m = String(name || '').match(/^([\w.-]+)__(\d+[mhdw])__(\d+)d\.csv$/i);
+      if (!m) return null;
+      return { stem: m[1], tf: String(m[2]).toLowerCase() };
+    }
+    function syncActionSymbolTfFromWorkspaceDataset(){
+      const dsSel = document.getElementById('workspaceDatasetSelect');
+      const symEl = document.getElementById('actionSymbol');
+      const tfEl = document.getElementById('actionTf');
+      if (!dsSel || !symEl || !tfEl) return;
+      const v = dsSel.value;
+      if (!v || v === '__live__' || v === '__database__' || v === '__auto_csv__') return;
+      const p = parseWorkspaceDatasetFilename(v);
+      if (!p) return;
+      const ccxt = stemToCcxtFromDatasetStem(p.stem);
+      if (ccxt) symEl.value = ccxt;
+      const tf = p.tf.toLowerCase();
+      const opts = [...tfEl.options];
+      const hit = opts.find((o) => String(o.value).toLowerCase() === tf);
+      if (hit) tfEl.value = hit.value;
+      updateWorkspaceActiveLine();
+    }
+
+    const _datasetBtnLabels = { ws: null, leg: null };
+    function datasetFetchEnsureLabels(){
+      const bw = document.getElementById('btnFetchDatasetWorkspace');
+      const bl = document.getElementById('btnFetchOhlcv');
+      if (bw && !_datasetBtnLabels.ws) _datasetBtnLabels.ws = bw.getAttribute('data-default-label') || bw.textContent.trim();
+      if (bl && !_datasetBtnLabels.leg) _datasetBtnLabels.leg = bl.getAttribute('data-default-label') || bl.textContent.trim();
+    }
+    function datasetFetchSetBusy(busy, activeMode){
+      datasetFetchEnsureLabels();
+      const bw = document.getElementById('btnFetchDatasetWorkspace');
+      const bl = document.getElementById('btnFetchOhlcv');
+      const br = document.getElementById('btnWorkspaceRefresh');
+      if (bw) {
+        bw.disabled = !!busy;
+        bw.textContent = busy && activeMode === 'workspace' ? 'Téléchargement…' : _datasetBtnLabels.ws;
+      }
+      if (bl) {
+        bl.disabled = !!busy;
+        bl.textContent = busy && activeMode === 'legacy' ? 'Téléchargement…' : _datasetBtnLabels.leg;
+      }
+      if (br) br.disabled = !!busy;
+    }
+    function datasetOpSetStyle(variant){
+      const st = document.getElementById('datasetOperationStatus');
+      if (!st) return;
+      const colors = { idle: '#334155', busy: '#6366f1', ok: '#15803d', err: '#c2410c' };
+      st.style.borderColor = colors[variant] || colors.idle;
+    }
+    function datasetOpSetHtml(html){
+      const st = document.getElementById('datasetOperationStatus');
+      if (st) st.innerHTML = html;
+    }
+    function datasetOpReflectFromState(s){
+      const st = document.getElementById('datasetOperationStatus');
+      if (!st) return;
+      const lf = s && s.last_ohlcv_fetch;
+      if (!lf || typeof lf !== 'object') {
+        datasetOpSetStyle('idle');
+        datasetOpSetHtml(
+          '<strong>État</strong> : prêt. Utilise le bouton vert pour créer un CSV workspace, ou « Autres modes » pour live / base.',
+        );
+        return;
+      }
+      if (lf.ok === true) {
+        datasetOpSetStyle('ok');
+        let line = (lf.bars != null ? String(lf.bars) : '?') + ' bougies';
+        if (lf.workspace_csv_basename) {
+          line += ' → fichier « ' + lf.workspace_csv_basename + ' » (dataset workspace activé).';
+        } else {
+          line += '. Mode autre que CSV workspace — voir le JSON « Dernier fetch » pour détail.';
+        }
+        datasetOpSetHtml('<strong>Dernier téléchargement</strong> : succès. ' + escapeHtml(line));
+      } else if (lf.ok === false) {
+        datasetOpSetStyle('err');
+        datasetOpSetHtml(
+          '<strong>Dernier téléchargement</strong> : échec — ' + escapeHtml(String(lf.detail || 'sans détail')),
+        );
+      } else {
+        datasetOpSetStyle('idle');
+        datasetOpSetHtml('<strong>État</strong> : voir « Dernier fetch » (réponse ambiguë).');
+      }
+    }
+
+    function renderPaperLiveDashboard(s){
+      const pl = (s && s.paper_live) || {};
+      const run = !!(s && s.paper_live_running);
+      const set = (id, txt) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = txt;
+      };
+      set('botTileRunning', run ? 'ACTIF' : 'Arrêté');
+      if (s && s.task_alive != null) {
+        set('botTileTask', s.task_alive ? 'tâche asyncio active' : 'running sans tâche (anormal)');
+      } else {
+        set('botTileTask', run ? 'worker attendu' : '—');
+      }
+      set('botTileInterval', (s && s.paper_live_interval_sec != null ? String(s.paper_live_interval_sec) : '—') + ' s');
+      const ltEl = document.getElementById('botTileLastTick');
+      if (ltEl) {
+        if (pl.last_tick_utc) {
+          ltEl.textContent = formatIsoDisplayCh(pl.last_tick_utc);
+          ltEl.title = String(pl.last_tick_utc) + '  ·  ' + formatIsoDisplayCh(pl.last_tick_utc);
+        } else {
+          ltEl.textContent = '—';
+          ltEl.removeAttribute('title');
+        }
+      }
+      const sym = pl.symbol || s.paper_live_symbol || s.effective_symbol || '—';
+      const tf = pl.timeframe || s.paper_live_timeframe || s.effective_timeframe || '—';
+      set('botTileSymTf', sym + ' · ' + tf);
+      set('botTileBars', pl.bars != null ? String(pl.bars) : '—');
+      set('botTileTrend', pl.trend || '—');
+      set('botTileSetups', pl.setups_count != null ? String(pl.setups_count) : '—');
+      const top = pl.top_setup;
+      set(
+        'botTileTopSetup',
+        top ? `${top.type || ''} ${top.side || ''} (conf ${Math.round((top.confidence || 0) * 100)}%)` : '—',
+      );
+      const mf = pl.method_file != null ? String(pl.method_file) : '—';
+      set('botTileMethod', mf);
+      const cumN = pl.sim_cumulative_net_pnl_quote;
+      if (cumN != null && Number.isFinite(Number(cumN))) {
+        set('botTileEquity', Number(cumN).toFixed(4) + ' (quote, qte=1)');
+      } else {
+        set('botTileEquity', '—');
+      }
+      const note = document.getElementById('botTileSessionNote');
+      if (note) {
+        const err = pl.last_error || pl.detail;
+        const pos = pl.sim_position;
+        const simNote = pl.sim_execution_note_fr;
+        if (err) note.textContent = String(err).slice(0, 220);
+        else if (pos) {
+          note.textContent =
+            ('Sim : ' +
+              pos.side +
+              ' @ ' +
+              pos.entry +
+              ' · SL ' +
+              pos.stop_loss +
+              ' · TP ' +
+              pos.take_profit).slice(0, 220);
+        } else if (simNote && simNote !== '—') {
+          note.textContent = String(simNote).slice(0, 220);
+        } else {
+          note.textContent =
+            'Pas de position ouverte. Les exécutions fictives sont listées dans « Trades paper (simulation) ».';
+        }
+      }
+      // undefined = pas de statut worker (ex. rendu depuis /control/state seul) : ne pas confondre avec false.
+      const taskAliveRaw = s && s.task_alive;
+      const taskAlive = taskAliveRaw === true;
+      const taskAliveUnknown = !!(s && s.paper_live_running) && taskAliveRaw !== true && taskAliveRaw !== false;
+      const btn = document.getElementById('btnPaperLiveToggle');
+      const badge = document.getElementById('paperRunStateBadge');
+      const sub = document.getElementById('paperRunStateSub');
+      if (btn) {
+        if (run) {
+          btn.textContent = 'Arrêter le run';
+          btn.className = 'secondary';
+        } else {
+          btn.textContent = 'Démarrer le run paper';
+          btn.className = 'good';
+        }
+      }
+      if (badge && sub) {
+        const pb = (s && s.paper_execution_backend) || 'sim_replay';
+        const pex = (s && s.paper_ohlcv_exchange_id) ? String(s.paper_ohlcv_exchange_id) : '(.env)';
+        const exHint = 'CCXT ' + pex + ' · ' + pb;
+        if (run) {
+          if (taskAliveUnknown) {
+            badge.textContent = 'Statut…';
+            badge.className = 'badge off';
+            sub.textContent =
+              'Run enregistré mais statut tâche inconnu ici — ouvre « Paper live statut » ou rafraîchis (GET /paper-live/status). ' +
+              exHint +
+              '.';
+          } else {
+            badge.textContent = taskAlive ? 'En cours' : 'Transition';
+            badge.className = 'badge ' + (taskAlive ? 'ok' : 'off');
+            sub.textContent = taskAlive
+              ? 'Boucle active : analyse SMC + trades simulés. ' + exHint + '.'
+              : 'Run annoncé mais tâche absente — voir le JSON statut ou les messages API. (' + exHint + ')';
+          }
+        } else {
+          badge.textContent = 'Arrêté';
+          badge.className = 'badge off';
+          sub.textContent = 'Aucune boucle. Réglages : ' + exHint + '.';
+        }
+      }
+      renderPaperLiveTradeLog(s);
+      renderPaperLiveTickLog(s);
+    }
+
+    function renderPaperLiveTradeLog(s){
+      const pl = (s && s.paper_live) || {};
+      const log = Array.isArray(pl.trade_log) ? pl.trade_log : [];
+      const tb = document.querySelector('#paperLiveTradeLogTable tbody');
+      if (!tb) return;
+      tb.innerHTML = '';
+      if (!log.length) {
+        const tr = document.createElement('tr');
+        tr.innerHTML =
+          '<td colspan="11" class="muted">Aucun trade simulé — il faut un top setup puis une sortie SL ou TP sur les bougies suivantes.</td>';
+        tb.appendChild(tr);
+        return;
+      }
+      log.forEach((row) => {
+        const fmt = (v) => (v === undefined || v === null ? '—' : String(v));
+        const tcell = (iso) => {
+          if (iso == null || iso === '') return '<td>—</td>';
+          const raw = String(iso).trim();
+          return (
+            '<td title="' +
+            escapeHtml(raw + '  ·  ' + formatIsoDisplayCh(raw)) +
+            '">' +
+            escapeHtml(formatIsoDisplayCh(raw)) +
+            '</td>'
+          );
+        };
+        const tr = document.createElement('tr');
+        tr.innerHTML = [
+          tcell(row.utc),
+          tcell(row.exit_bar_utc),
+          '<td>' + escapeHtml(fmt(row.symbol)) + '</td>',
+          '<td>' + escapeHtml(fmt(row.timeframe)) + '</td>',
+          '<td>' + escapeHtml(fmt(row.side)) + '</td>',
+          '<td>' + escapeHtml(fmt(row.setup_type)) + '</td>',
+          '<td class="num">' + escapeHtml(fmt(row.entry)) + '</td>',
+          '<td class="num">' + escapeHtml(fmt(row.exit)) + '</td>',
+          '<td>' + escapeHtml(fmt(row.outcome)) + '</td>',
+          '<td class="num">' + escapeHtml(fmt(row.net_pnl_quote)) + '</td>',
+          '<td class="num">' + escapeHtml(fmt(row.bars_held)) + '</td>',
+        ].join('');
+        tb.appendChild(tr);
+      });
+    }
+
+    function renderPaperLiveTickLog(s){
+      const pl = (s && s.paper_live) || {};
+      const log = Array.isArray(pl.tick_log) ? pl.tick_log : [];
+      const tb = document.querySelector('#paperLiveTickLogTable tbody');
+      if (!tb) return;
+      tb.innerHTML = '';
+      if (!log.length) {
+        const tr = document.createElement('tr');
+        tr.innerHTML =
+          '<td colspan="12" class="muted">Aucun tick — lance paper live et attends un cycle, ou vérifie les erreurs ci-dessous.</td>';
+        tb.appendChild(tr);
+        return;
+      }
+      log.forEach((row) => {
+        const tr = document.createElement('tr');
+        const fmt = (v) => (v === undefined || v === null ? '—' : String(v));
+        const utcRaw = row.utc == null || row.utc === '' ? '' : String(row.utc).trim();
+        const utcCell =
+          utcRaw === ''
+            ? '<td>—</td>'
+            : '<td title="' +
+              escapeHtml(utcRaw + '  ·  ' + formatIsoDisplayCh(utcRaw)) +
+              '">' +
+              escapeHtml(formatIsoDisplayCh(utcRaw)) +
+              '</td>';
+        tr.innerHTML = [
+          utcCell,
+          '<td>' + escapeHtml(fmt(row.symbol)) + '</td>',
+          '<td>' + escapeHtml(fmt(row.timeframe)) + '</td>',
+          '<td class="num">' + escapeHtml(fmt(row.bars)) + '</td>',
+          '<td>' + escapeHtml(fmt(row.trend)) + '</td>',
+          '<td class="num">' + escapeHtml(fmt(row.setups)) + '</td>',
+          '<td>' + escapeHtml(fmt(row.top_type)) + '</td>',
+          '<td>' + escapeHtml(fmt(row.top_side)) + '</td>',
+          '<td class="num">' + escapeHtml(fmt(row.top_conf)) + '</td>',
+          '<td class="num">' + escapeHtml(fmt(row.top_rr)) + '</td>',
+          '<td class="num">' + escapeHtml(fmt(row.top_entry)) + '</td>',
+          '<td class="num">' + escapeHtml(fmt(row.top_sl)) + '</td>',
+        ].join('');
+        tb.appendChild(tr);
+      });
+    }
+
+    function timeframeBarSecondsJs(tf){
+      const m = String(tf || '')
+        .trim()
+        .toLowerCase()
+        .match(/^(\d+)([mhdw])$/);
+      if (!m) return 3600;
+      const n = parseInt(m[1], 10);
+      const mult = { m: 60, h: 3600, d: 86400, w: 604800 }[m[2]] || 3600;
+      return n * mult;
+    }
+
+    function barsForCalendarDaysJs(days, tf){
+      const sec = timeframeBarSecondsJs(tf);
+      if (!sec) return 100;
+      const d = Math.max(1, Number(days) || 1);
+      return Math.max(100, Math.min(20000, Math.ceil((d * 86400) / sec)));
+    }
+
+    function updateDatasetBarsPreview(){
+      const el = document.getElementById('datasetBarsPreview');
+      if (!el) return;
+      const days = Number(document.getElementById('datasetCalendarDays').value) || 1;
+      const tfEl = document.getElementById('actionTf');
+      const tf = tfEl ? tfEl.value || '1h' : '1h';
+      const tcEl = document.getElementById('datasetTargetCandles');
+      const tcRaw = tcEl && tcEl.value != null ? String(tcEl.value).trim() : '';
+      const tc = tcRaw === '' ? null : Math.floor(Number(tcRaw));
+      if (tc != null && !Number.isNaN(tc) && tc >= 300) {
+        el.textContent = String(Math.min(100000, Math.max(300, tc))) + ' (cible explicite)';
+        return;
+      }
+      el.textContent = String(barsForCalendarDaysJs(days, tf));
+    }
+
+    function isValidWorkspaceCsvFilename(s){
+      const t = String(s || '').trim();
+      if (!t) return false;
+      return /^[\w.\-]+\.csv$/i.test(t) && !/[\\/]/.test(t);
+    }
+
+    async function runFetchDatasetWorkspace(){
+      const symbol = document.getElementById('actionSymbol').value.trim();
+      const tf = document.getElementById('actionTf').value.trim();
+      if (!symbol || !tf) {
+        out({ erreur: 'Symbole et timeframe obligatoires pour télécharger.' });
+        datasetOpSetStyle('err');
+        datasetOpSetHtml(
+          '<strong>Bloqué</strong> : renseigne le symbole et le timeframe au-dessus, puis réessaie.',
+        );
+        return;
+      }
+      const days = Number(document.getElementById('datasetCalendarDays').value) || 30;
+      const fnRaw = document.getElementById('datasetCsvFilename').value.trim();
+      let fn = '';
+      if (fnRaw) {
+        if (isValidWorkspaceCsvFilename(fnRaw)) fn = fnRaw;
+        else {
+          out({
+            attention:
+              'Nom CSV optionnel ignoré (doit être un seul fichier, ex. BTC_USDT__1h__50d.csv). Valeur auto utilisée.',
+            saisi: fnRaw,
+          });
+        }
+      }
+      const qs = new URLSearchParams({
+        symbol,
+        timeframe: tf,
+        calendar_days: String(days),
+        set_active_dataset: 'true',
+        sync_analysis_window: 'true',
+      });
+      if (fn) qs.set('filename', fn);
+      const tcEl = document.getElementById('datasetTargetCandles');
+      const tcRaw = tcEl && tcEl.value != null ? String(tcEl.value).trim() : '';
+      if (tcRaw !== '') {
+        const n = Math.floor(Number(tcRaw));
+        if (!Number.isNaN(n) && n >= 300) qs.set('target_candles', String(Math.min(100000, Math.max(300, n))));
+      }
+      const mergeEl = document.getElementById('datasetMergeExisting');
+      if (mergeEl && mergeEl.checked) qs.set('merge_existing', 'true');
+      datasetFetchSetBusy(true, 'workspace');
+      datasetOpSetStyle('busy');
+      datasetOpSetHtml(
+        "<strong>En cours</strong> : connexion à l'exchange (CCXT), téléchargement de l'historique…<br>" +
+          'Symbole <code>' +
+          escapeHtml(symbol) +
+          '</code> · TF <code>' +
+          escapeHtml(tf) +
+          '</code> · ' +
+          escapeHtml(String(days)) +
+          ' jours. Patiente (souvent 10–60 s).',
+      );
+      try {
+        const res = await fetch('/api/v1/control/workspace/fetch-dataset?' + qs.toString(), { method: 'POST' });
+        const data = await res.json();
+        out(data);
+        if (!res.ok) {
+          datasetOpSetStyle('err');
+          const det =
+            typeof data.detail === 'string'
+              ? data.detail
+              : data.detail != null
+                ? JSON.stringify(data.detail)
+                : JSON.stringify(data);
+          datasetOpSetHtml('<strong>Erreur</strong> (HTTP ' + res.status + ') : ' + escapeHtml(det));
+          return;
+        }
+        if (data.ok) {
+          datasetOpSetStyle('ok');
+          const bn = data.workspace_csv_basename || (data.saved && data.saved.basename) || '';
+          const mf = data.ohlcv_multi_fetch || {};
+          const req = mf.http_requests != null ? ' · ' + escapeHtml(String(mf.http_requests)) + ' requête(s) HTTP' : '';
+          const merged =
+            data.saved && data.saved.merged_with_existing
+              ? ' · fusion avec fichier existant'
+              : '';
+          datasetOpSetHtml(
+            '<strong>Terminé</strong> : ' +
+              escapeHtml(String(data.bars ?? '?')) +
+              ' bougies enregistrées' +
+              (bn ? ' dans « ' + escapeHtml(bn) + ' ».' : '.') +
+              req +
+              escapeHtml(merged) +
+              ' Le dataset actif et les limites backtest/optim ont été mis à jour.',
+          );
+        } else {
+          datasetOpSetStyle('err');
+          datasetOpSetHtml(
+            '<strong>Échec</strong> : ' + escapeHtml(String(data.detail || 'aucune bougie renvoyée')),
+          );
+        }
+        await loadState();
+      } catch (e) {
+        datasetOpSetStyle('err');
+        datasetOpSetHtml('<strong>Erreur réseau / navigateur</strong> : ' + escapeHtml(String(e)));
+        out(String(e));
+      } finally {
+        datasetFetchSetBusy(false, null);
+      }
+    }
+
+    function _methodSetInput(id, val){
+      const el = document.getElementById(id);
+      if (!el) return;
+      if (el.type === 'checkbox') {
+        el.checked = !!val;
+        return;
+      }
+      if (val === undefined || val === null || val === '') el.value = '';
+      else el.value = String(val);
+    }
+
+    function syncSimOptimizationSelectorsFromMethods(){
+      const m = document.getElementById('methodFormOptObjective');
+      const s = document.getElementById('simOptimizationObjective');
+      if (m && s && [...s.options].some((o) => o.value === m.value)) s.value = m.value;
+      const ms = document.getElementById('methodFormOptStrategy');
+      const ss = document.getElementById('simOptimizationStrategy');
+      if (ms && ss && [...ss.options].some((o) => o.value === ms.value)) ss.value = ms.value;
+    }
+
+    function wireSimOptimizationSelectors(){
+      const m = document.getElementById('methodFormOptObjective');
+      const s = document.getElementById('simOptimizationObjective');
+      if (m && s) {
+        s.addEventListener('change', () => {
+          if (m.value !== s.value) m.value = s.value;
+        });
+        m.addEventListener('change', () => {
+          if (s.value !== m.value) s.value = m.value;
+        });
+      }
+      const ms = document.getElementById('methodFormOptStrategy');
+      const ss = document.getElementById('simOptimizationStrategy');
+      if (ms && ss) {
+        ss.addEventListener('change', () => {
+          if (ms.value !== ss.value) ms.value = ss.value;
+        });
+        ms.addEventListener('change', () => {
+          if (ss.value !== ms.value) ss.value = ms.value;
+        });
+      }
+    }
+
+    function applyMethodFileToForm(obj){
+      _methodEditorBase = obj && typeof obj === 'object' ? JSON.parse(JSON.stringify(obj)) : {};
+      const c = _methodEditorBase;
+      _methodSetInput('methodFormSymbols', (c.symbols || []).join(', '));
+      _methodSetInput('methodFormTimeframes', (c.timeframes || []).join(', '));
+      _methodSetInput('methodFormScanLimit', c.scan_limit != null ? c.scan_limit : '');
+      const p = c.best_engine_params || {};
+      _methodSetInput('methodFormRrMin', p.rr_min);
+      _methodSetInput('methodFormFvgProx', p.fvg_proximity_pct);
+      _methodSetInput('methodFormObProx', p.ob_proximity_pct);
+      _methodSetInput('methodFormMaxSetups', p.max_setups);
+      _methodSetInput('methodFormSwingLeft', p.swing_left);
+      _methodSetInput('methodFormSwingRight', p.swing_right);
+      _methodSetInput('methodFormUnitSize', c.unit_size);
+      _methodSetInput('methodFormEntryFee', c.entry_fee_rate);
+      _methodSetInput('methodFormExitFee', c.exit_fee_rate);
+      _methodSetInput('methodFormFunding8h', c.funding_rate_8h);
+      _methodSetInput('methodFormAutoFee', !!c.auto_fee_from_exchange);
+      _methodSetInput('methodFormAutoFunding', !!c.auto_funding_from_exchange);
+      const fmEl = document.getElementById('methodFormFeeMarket');
+      if (fmEl) fmEl.value = c.fee_market_type === 'spot' ? 'spot' : 'swap';
+      setOptNum('methodFormReplayTrailR', c.replay_trail_after_r);
+      setOptNum('methodFormReplayTrailAtr', c.replay_trail_atr_mult);
+      _methodSetInput('methodFormReplayTrailAtrPeriod', c.replay_trail_atr_period != null ? c.replay_trail_atr_period : '');
+      _methodSetInput('methodFormRequireIfvg', !!c.require_ifvg_confluence);
+      _methodSetInput('methodFormIfvgPct', c.ifvg_confluence_pct);
+      _methodSetInput('methodFormRequireRsiDiv', !!c.require_rsi_divergence);
+      _methodSetInput('methodFormTrainingBars', c.training_bars);
+      _methodSetInput('methodFormMaxHoldingBars', c.max_holding_bars);
+      _methodSetInput('methodFormAutoParameters', c.auto_parameters !== false);
+      const ob = c.optimization_objective || 'net_pnl_quote';
+      const obEl = document.getElementById('methodFormOptObjective');
+      if (obEl && [...obEl.options].some((o) => o.value === ob)) obEl.value = ob;
+      const ostr = String(c.optimization_strategy || 'exhaustive').toLowerCase();
+      const ostrEl = document.getElementById('methodFormOptStrategy');
+      if (ostrEl && [...ostrEl.options].some((o) => o.value === ostr)) ostrEl.value = ostr;
+      _methodSetInput('methodFormMaxTrials', c.optimization_max_trials != null ? c.optimization_max_trials : '');
+      _methodSetInput('methodFormTelegram', !!c.telegram_enabled);
+      const apRaw = String(c.analysis_period_preset || DEFAULT_ANALYSIS_PERIOD_PRESET).toLowerCase();
+      const apEl = document.getElementById('analysisPeriodPreset');
+      if (apEl) {
+        if ([...apEl.options].some((o) => o.value === apRaw)) apEl.value = apRaw;
+        else apEl.value = DEFAULT_ANALYSIS_PERIOD_PRESET;
+      }
+      _methodSetInput('periodMaxBars', c.period_max_bars != null ? c.period_max_bars : '');
+      _methodSetInput('backtestLimit', c.backtest_limit != null ? c.backtest_limit : '');
+      _methodSetInput('optimizeLimit', c.optimize_limit != null ? c.optimize_limit : '');
+      _methodSetInput('topOptimization', c.top_optimization != null ? c.top_optimization : '');
+      _methodSetInput('wfSplits', c.wf_splits != null ? c.wf_splits : '');
+      const g = c.optimization_grid || {};
+      _methodSetInput('methodFormGridRr', (g.rr_min_values || []).join(','));
+      _methodSetInput('methodFormGridFvg', (g.fvg_proximity_values || []).join(','));
+      _methodSetInput('methodFormGridOb', (g.ob_proximity_values || []).join(','));
+      _methodSetInput('methodFormGridSwingL', (g.swing_left_values || []).join(','));
+      _methodSetInput('methodFormGridSwingR', (g.swing_right_values || []).join(','));
+      _methodSetInput('methodFormGridMaxSetups', (g.max_setups_values || []).join(','));
+      syncSimOptimizationSelectorsFromMethods();
+      methodSyncEditorFromForm();
+    }
+
+    function _methodNumField(id){
+      const el = document.getElementById(id);
+      if (!el) return undefined;
+      const t = el.value.trim();
+      if (t === '') return undefined;
+      const n = Number(t);
+      return Number.isFinite(n) ? n : undefined;
+    }
+
+    function collectMethodFormObject(){
+      const o = JSON.parse(JSON.stringify(_methodEditorBase || {}));
+      const symEl = document.getElementById('methodFormSymbols');
+      const sym = symEl ? symEl.value.trim() : '';
+      if (sym) o.symbols = sym.split(',').map((s) => s.trim()).filter(Boolean);
+      else delete o.symbols;
+      const tfEl = document.getElementById('methodFormTimeframes');
+      const tf = tfEl ? tfEl.value.trim() : '';
+      if (tf) o.timeframes = tf.split(',').map((s) => s.trim()).filter(Boolean);
+      else delete o.timeframes;
+      const sl = _methodNumField('methodFormScanLimit');
+      if (sl != null) o.scan_limit = Math.max(100, Math.min(5000, Math.floor(sl)));
+      else delete o.scan_limit;
+
+      const bePrev = { ...(o.best_engine_params || {}) };
+      const be = { ...bePrev };
+      const beKeys = [
+        ['rr_min', 'methodFormRrMin'],
+        ['fvg_proximity_pct', 'methodFormFvgProx'],
+        ['ob_proximity_pct', 'methodFormObProx'],
+        ['max_setups', 'methodFormMaxSetups'],
+        ['swing_left', 'methodFormSwingLeft'],
+        ['swing_right', 'methodFormSwingRight'],
+      ];
+      beKeys.forEach(([k, id]) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const t = el.value.trim();
+        if (t === '') delete be[k];
+        else {
+          const n = Number(t);
+          if (Number.isFinite(n)) be[k] = n;
+        }
+      });
+      if (Object.keys(be).length) o.best_engine_params = be;
+      else delete o.best_engine_params;
+
+      const us = _methodNumField('methodFormUnitSize');
+      if (us != null) o.unit_size = us;
+      else delete o.unit_size;
+      const ef = _methodNumField('methodFormEntryFee');
+      if (ef != null) o.entry_fee_rate = ef;
+      else delete o.entry_fee_rate;
+      const xf = _methodNumField('methodFormExitFee');
+      if (xf != null) o.exit_fee_rate = xf;
+      else delete o.exit_fee_rate;
+      const fu = _methodNumField('methodFormFunding8h');
+      if (fu != null) o.funding_rate_8h = fu;
+      else delete o.funding_rate_8h;
+
+      const autoFeeEl = document.getElementById('methodFormAutoFee');
+      const autoFundEl = document.getElementById('methodFormAutoFunding');
+      const feeMktEl = document.getElementById('methodFormFeeMarket');
+      o.auto_fee_from_exchange = !!(autoFeeEl && autoFeeEl.checked);
+      o.auto_funding_from_exchange = !!(autoFundEl && autoFundEl.checked);
+      o.fee_market_type = feeMktEl && feeMktEl.value === 'spot' ? 'spot' : 'swap';
+
+      delete o.replay_break_even_r;
+      const rta = parseFloatOrNull('methodFormReplayTrailR');
+      if (rta != null) o.replay_trail_after_r = rta;
+      else delete o.replay_trail_after_r;
+      const rtm = parseFloatOrNull('methodFormReplayTrailAtr');
+      if (rtm != null) o.replay_trail_atr_mult = rtm;
+      else delete o.replay_trail_atr_mult;
+      const rtp = _methodNumField('methodFormReplayTrailAtrPeriod');
+      if (rtp != null) o.replay_trail_atr_period = rtp;
+      else delete o.replay_trail_atr_period;
+
+      const reqIfvg = document.getElementById('methodFormRequireIfvg');
+      o.require_ifvg_confluence = !!(reqIfvg && reqIfvg.checked);
+      const ifp = _methodNumField('methodFormIfvgPct');
+      if (ifp != null) o.ifvg_confluence_pct = ifp;
+      else delete o.ifvg_confluence_pct;
+      const reqRsi = document.getElementById('methodFormRequireRsiDiv');
+      o.require_rsi_divergence = !!(reqRsi && reqRsi.checked);
+
+      const tb = _methodNumField('methodFormTrainingBars');
+      if (tb != null) o.training_bars = tb;
+      else delete o.training_bars;
+      const mh = _methodNumField('methodFormMaxHoldingBars');
+      if (mh != null) o.max_holding_bars = mh;
+      else delete o.max_holding_bars;
+      const autoP = document.getElementById('methodFormAutoParameters');
+      o.auto_parameters = autoP ? !!autoP.checked : true;
+
+      const optObjEl =
+        document.getElementById('simOptimizationObjective') || document.getElementById('methodFormOptObjective');
+      if (optObjEl && optObjEl.value) o.optimization_objective = optObjEl.value;
+      else delete o.optimization_objective;
+      const gprev = { ...(o.optimization_grid || {}) };
+      const g = { ...gprev };
+      const gridVal = (id) => {
+        const el = document.getElementById(id);
+        return el && el.value ? toNumCsv(el.value) : [];
+      };
+      const rr = gridVal('methodFormGridRr');
+      if (rr.length) g.rr_min_values = rr;
+      else delete g.rr_min_values;
+      const fv = gridVal('methodFormGridFvg');
+      if (fv.length) g.fvg_proximity_values = fv;
+      else delete g.fvg_proximity_values;
+      const obg = gridVal('methodFormGridOb');
+      if (obg.length) g.ob_proximity_values = obg;
+      else delete g.ob_proximity_values;
+      const slv = gridVal('methodFormGridSwingL');
+      if (slv.length) g.swing_left_values = slv.map((x) => Math.floor(x));
+      else delete g.swing_left_values;
+      const srv = gridVal('methodFormGridSwingR');
+      if (srv.length) g.swing_right_values = srv.map((x) => Math.floor(x));
+      else delete g.swing_right_values;
+      const ms = gridVal('methodFormGridMaxSetups');
+      if (ms.length) g.max_setups_values = ms.map((x) => Math.floor(x));
+      else delete g.max_setups_values;
+      if (Object.keys(g).length) o.optimization_grid = g;
+      else delete o.optimization_grid;
+
+      const stEl =
+        document.getElementById('simOptimizationStrategy') || document.getElementById('methodFormOptStrategy');
+      if (stEl && stEl.value) o.optimization_strategy = stEl.value;
+      else delete o.optimization_strategy;
+      const mtn = _methodNumField('methodFormMaxTrials');
+      if (mtn != null) o.optimization_max_trials = Math.max(10, Math.min(10000, Math.floor(mtn)));
+      else delete o.optimization_max_trials;
+
+      const tel = document.getElementById('methodFormTelegram');
+      if (tel) o.telegram_enabled = !!tel.checked;
+
+      const apEl = document.getElementById('analysisPeriodPreset');
+      if (apEl && apEl.value) o.analysis_period_preset = apEl.value;
+      const pmb = _methodNumField('periodMaxBars');
+      if (pmb != null) o.period_max_bars = pmb;
+      else delete o.period_max_bars;
+      const btl = _methodNumField('backtestLimit');
+      if (btl != null) o.backtest_limit = btl;
+      else delete o.backtest_limit;
+      const optl = _methodNumField('optimizeLimit');
+      if (optl != null) o.optimize_limit = optl;
+      else delete o.optimize_limit;
+      const to = _methodNumField('topOptimization');
+      if (to != null) o.top_optimization = Math.max(1, Math.min(20, Math.floor(to)));
+      else delete o.top_optimization;
+      const wf = _methodNumField('wfSplits');
+      if (wf != null) o.wf_splits = Math.max(1, Math.min(12, Math.floor(wf)));
+      else delete o.wf_splits;
+
+      return o;
+    }
+
+    function hydrateMethodFormFromEffectiveRun(eff){
+      const o = {};
+      const keys = [
+        'symbols',
+        'timeframes',
+        'scan_limit',
+        'training_bars',
+        'max_holding_bars',
+        'unit_size',
+        'entry_fee_rate',
+        'exit_fee_rate',
+        'funding_rate_8h',
+        'replay_trail_after_r',
+        'replay_trail_atr_mult',
+        'replay_trail_atr_period',
+        'require_ifvg_confluence',
+        'ifvg_confluence_pct',
+        'require_rsi_divergence',
+        'auto_parameters',
+        'auto_fee_from_exchange',
+        'fee_market_type',
+        'auto_funding_from_exchange',
+        'telegram_enabled',
+        'analysis_period_preset',
+        'period_max_bars',
+        'backtest_limit',
+        'optimize_limit',
+        'top_optimization',
+        'wf_splits',
+        'optimization_objective',
+        'optimization_strategy',
+        'optimization_max_trials',
+      ];
+      keys.forEach((k) => {
+        if (Object.prototype.hasOwnProperty.call(eff, k) && eff[k] !== undefined) o[k] = eff[k];
+      });
+      if (eff.best_engine_params && typeof eff.best_engine_params === 'object') {
+        o.best_engine_params = { ...eff.best_engine_params };
+      }
+      if (eff.optimization_grid && typeof eff.optimization_grid === 'object') {
+        o.optimization_grid = { ...eff.optimization_grid };
+      }
+      return o;
+    }
+
+    async function refreshMethodFormDisplay(stateObj){
+      const eff = stateObj.effective_run && typeof stateObj.effective_run === 'object' ? stateObj.effective_run : stateObj;
+      const h = hydrateMethodFormFromEffectiveRun(eff);
+      const mf = stateObj.dashboard_method_file;
+      let merged = { ...h };
+      if (mf) {
+        try {
+          const res = await fetch('/api/v1/control/workspace/method-file?name=' + encodeURIComponent(mf));
+          if (res.ok) {
+            const raw = (await res.json()).content || {};
+            merged = { ...raw, ...h };
+          }
+        } catch (_) {}
+      }
+      applyMethodFileToForm(merged);
+    }
+
+    function methodObjectToStatePatch(m){
+      const p = m.best_engine_params || {};
+      const g = m.optimization_grid || {};
+      const sym = Array.isArray(m.symbols) ? m.symbols : [];
+      const tf = Array.isArray(m.timeframes) ? m.timeframes : [];
+      const gridDefaults = {
+        rr_min_values: [1.8, 2.0, 2.2, 2.5],
+        fvg_proximity_values: [0.003, 0.004, 0.006],
+        ob_proximity_values: [0.003, 0.004, 0.006],
+        swing_left_values: [2, 3, 4],
+        swing_right_values: [2, 3, 4],
+        max_setups_values: [3, 4, 5],
+      };
+      function gridArr(key, asInt){
+        let v = g[key];
+        if (!Array.isArray(v) || !v.length) v = gridDefaults[key] || [];
+        if (asInt) return v.map((x) => Math.floor(Number(x))).filter((x) => !Number.isNaN(x));
+        return v.map((x) => Number(x)).filter((x) => !Number.isNaN(x));
+      }
+      function optReplay(v){
+        if (v === undefined || v === null || v === '') return null;
+        const n = Number(v);
+        return Number.isFinite(n) ? n : null;
+      }
+      return {
+        auto_parameters: m.auto_parameters !== false,
+        telegram_enabled: !!m.telegram_enabled,
+        symbols: sym,
+        timeframes: tf,
+        scan_limit: m.scan_limit != null ? Math.max(100, Math.min(5000, Math.floor(Number(m.scan_limit)))) : 500,
+        analysis_period_preset: m.analysis_period_preset || DEFAULT_ANALYSIS_PERIOD_PRESET,
+        period_max_bars: m.period_max_bars != null ? Number(m.period_max_bars) : 5000,
+        backtest_limit: m.backtest_limit != null ? Number(m.backtest_limit) : 1200,
+        optimize_limit: m.optimize_limit != null ? Number(m.optimize_limit) : 1200,
+        top_optimization: m.top_optimization != null ? Math.max(1, Math.min(20, Math.floor(Number(m.top_optimization)))) : 5,
+        wf_splits: m.wf_splits != null ? Math.max(1, Math.min(12, Math.floor(Number(m.wf_splits)))) : 3,
+        training_bars: m.training_bars != null ? Number(m.training_bars) : 120,
+        max_holding_bars: m.max_holding_bars != null ? Number(m.max_holding_bars) : 120,
+        max_setups_per_bar:
+          m.max_setups_per_bar != null
+            ? Math.max(1, Math.min(10, Math.floor(Number(m.max_setups_per_bar))))
+            : 1,
+        replay_trail_after_r: optReplay(m.replay_trail_after_r),
+        replay_trail_atr_mult: optReplay(m.replay_trail_atr_mult),
+        replay_trail_atr_period: m.replay_trail_atr_period != null ? Number(m.replay_trail_atr_period) : 14,
+        require_ifvg_confluence: !!m.require_ifvg_confluence,
+        ifvg_confluence_pct: m.ifvg_confluence_pct != null ? Number(m.ifvg_confluence_pct) : 0.008,
+        require_rsi_divergence: !!m.require_rsi_divergence,
+        unit_size: m.unit_size != null ? Number(m.unit_size) : 1,
+        entry_fee_rate: m.entry_fee_rate != null ? Number(m.entry_fee_rate) : 0.0004,
+        exit_fee_rate: m.exit_fee_rate != null ? Number(m.exit_fee_rate) : 0.0004,
+        funding_rate_8h: m.funding_rate_8h != null ? Number(m.funding_rate_8h) : 0,
+        auto_fee_from_exchange: !!m.auto_fee_from_exchange,
+        fee_market_type: m.fee_market_type === 'spot' ? 'spot' : 'swap',
+        auto_funding_from_exchange: !!m.auto_funding_from_exchange,
+        optimization_objective: m.optimization_objective || 'net_pnl_quote',
+        optimization_strategy: m.optimization_strategy || 'exhaustive',
+        optimization_max_trials:
+          m.optimization_max_trials != null
+            ? Math.max(10, Math.min(10000, Math.floor(Number(m.optimization_max_trials))))
+            : 200,
+        optimization_grid: {
+          rr_min_values: gridArr('rr_min_values', false),
+          fvg_proximity_values: gridArr('fvg_proximity_values', false),
+          ob_proximity_values: gridArr('ob_proximity_values', false),
+          swing_left_values: gridArr('swing_left_values', true),
+          swing_right_values: gridArr('swing_right_values', true),
+          max_setups_values: gridArr('max_setups_values', true),
+        },
+        best_engine_params: {
+          rr_min: Number(p.rr_min ?? 2),
+          fvg_proximity_pct: Number(p.fvg_proximity_pct ?? 0.004),
+          ob_proximity_pct: Number(p.ob_proximity_pct ?? 0.004),
+          max_setups: Number(p.max_setups ?? 4),
+          swing_left: Number(p.swing_left ?? 3),
+          swing_right: Number(p.swing_right ?? 3),
+        },
+      };
+    }
+
+    function methodSyncEditorFromForm(){
+      const ed = document.getElementById('methodJsonEditor');
+      if (ed) ed.value = JSON.stringify(collectMethodFormObject(), null, 2);
+    }
+
+    function methodJsonToForm(){
+      let raw;
+      try {
+        raw = JSON.parse(document.getElementById('methodJsonEditor').value);
+      } catch (e) {
+        out({ erreur: 'JSON invalide', detail: String(e) });
+        return;
+      }
+      applyMethodFileToForm(raw);
+      out({ message: 'Formulaire aligné sur le JSON.' });
+    }
+
+    function methodFormatJson(){
+      try {
+        const raw = JSON.parse(document.getElementById('methodJsonEditor').value);
+        if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('Objet { ... } requis');
+        applyMethodFileToForm(raw);
+        out({ message: 'JSON valide ; éditeur reformaté.' });
+      } catch (e) {
+        out({ erreur: 'JSON invalide', detail: String(e) });
+      }
+    }
+
+    async function methodLoadSelected(){
+      const name = document.getElementById('workspaceMethodSelect').value;
+      if (!name) {
+        out({ erreur: 'Choisis un fichier .json dans la liste.' });
+        return;
+      }
+      const res = await fetch('/api/v1/control/workspace/method-file?name=' + encodeURIComponent(name));
+      const j = await res.json();
+      if (!res.ok) {
+        out(j);
+        return;
+      }
+      applyMethodFileToForm(j.content || {});
+      document.getElementById('methodSaveFilename').value = j.name || name;
+      out({ message: 'Méthode chargée', fichier: j.name });
+    }
+
+    function methodNewEmpty(){
+      applyMethodFileToForm(JSON.parse(JSON.stringify(DEFAULT_METHOD_TEMPLATE)));
+      document.getElementById('methodSaveFilename').value = '';
+      const ms = document.getElementById('workspaceMethodSelect');
+      if (ms) ms.value = '';
+    }
+
+    async function methodSavePayloadToName(filename){
+      let name = (filename || '').trim();
+      if (!name) {
+        out({ erreur: 'Nom de fichier requis (.json)' });
+        return false;
+      }
+      if (!name.toLowerCase().endsWith('.json')) name += '.json';
+      let body;
+      try {
+        body = collectMethodFormObject();
+      } catch (e) {
+        out({ erreur: 'Impossible de lire le formulaire méthode', detail: String(e) });
+        return false;
+      }
+      let res;
+      try {
+        res = await fetch('/api/v1/control/workspace/method-file?name=' + encodeURIComponent(name), {
+          method: 'PUT',
+          headers: headers(),
+          body: JSON.stringify(body),
+        });
+      } catch (e) {
+        out({ erreur: 'Réseau ou serveur injoignable', detail: String(e) });
+        return false;
+      }
+      const raw = await res.text();
+      let j;
+      try {
+        j = raw ? JSON.parse(raw) : {};
+      } catch (_) {
+        j = { detail: raw || 'Réponse non JSON' };
+      }
+      if (!res.ok) {
+        out(j);
+        return false;
+      }
+      _methodEditorBase = JSON.parse(JSON.stringify(body));
+      methodSyncEditorFromForm();
+      await refreshWorkspaceSelects();
+      const mfSel = document.getElementById('workspaceMethodSelect');
+      if (mfSel) {
+        if ([...mfSel.options].some((o) => o.value === name)) mfSel.value = name;
+        else {
+          const ox = document.createElement('option');
+          ox.value = name;
+          ox.textContent = name;
+          mfSel.appendChild(ox);
+          mfSel.value = name;
+        }
+      }
+      await persistWorkspaceSelection();
+      await refreshWorkspaceSelects();
+      out({ message: 'Méthode enregistrée', fichier: j.name || name, chemin: j.path || '' });
+      return true;
+    }
+
+    async function methodSaveCurrentFile(){
+      const sel = document.getElementById('workspaceMethodSelect').value;
+      const fn = document.getElementById('methodSaveFilename').value.trim();
+      const target = sel || fn;
+      if (!target) {
+        out({ erreur: 'Sélectionne un fichier ou remplis le nom pour « Enregistrer sous ».' });
+        return;
+      }
+      await methodSavePayloadToName(target);
+    }
+
+    async function methodSaveAsNew(){
+      const fn = document.getElementById('methodSaveFilename').value.trim();
+      if (!fn) {
+        out({ erreur: 'Remplis le nom du fichier (onglet Méthodes).' });
+        return;
+      }
+      await methodSavePayloadToName(fn);
+    }
+
+    function wizResetToMode(){
+      const m = document.getElementById('wizMode');
+      const n = document.getElementById('wizNew');
+      const e = document.getElementById('wizEdit');
+      if (m) m.style.display = '';
+      if (n) n.style.display = 'none';
+      if (e) e.style.display = 'none';
+    }
+
+    function wizNewShowStep(step){
+      for (let i = 1; i <= 5; i++) {
+        const el = document.getElementById('wizNewStep' + i);
+        if (el) el.style.display = i === step ? '' : 'none';
+      }
+      const hint = document.getElementById('wizNewHint');
+      const lines = [
+        '',
+        'Étape 1/5 — nom du fichier (sera enregistré dans data/dashboard_methods/)',
+        'Étape 2/5 — paires à analyser',
+        'Étape 3/5 — timeframes',
+        'Étape 4/5 — style du moteur (tu pourras tout modifier dans les réglages détaillés)',
+        'Étape 5/5 — aperçu puis création',
+      ];
+      if (hint) hint.textContent = lines[step] || '';
+    }
+
+    function wizSelectedProfile(){
+      const r = document.querySelector('input[name="wizProfile"]:checked');
+      return r ? r.value : 'balanced';
+    }
+
+    function wizardSanitizeFilename(raw){
+      let s = String(raw || '')
+        .trim()
+        .replace(/\s+/g, '_')
+        .replace(/[\\/<>|":*?]+/g, '');
+      if (!s) return '';
+      if (!s.toLowerCase().endsWith('.json')) s += '.json';
+      return s;
+    }
+
+    function wizardBuildMethodObject(displayLabel, symbolsCsv, tfsCsv, profile){
+      const o = JSON.parse(JSON.stringify(DEFAULT_METHOD_TEMPLATE));
+      const syms = String(symbolsCsv || '')
+        .split(',')
+        .map((x) => x.trim())
+        .filter(Boolean);
+      const tfs = String(tfsCsv || '')
+        .split(',')
+        .map((x) => x.trim())
+        .filter(Boolean);
+      if (syms.length) o.symbols = syms;
+      if (tfs.length) o.timeframes = tfs;
+      const label = (displayLabel || 'nouvelle').replace(/\.json$/i, '');
+      o.comment_fr = `Methode "${label}" — creee avec l'assistant (${profile}).`;
+      const be = { ...(o.best_engine_params || {}) };
+      if (profile === 'prudent') {
+        be.rr_min = Math.max(Number(be.rr_min ?? 2), 2.5);
+        be.fvg_proximity_pct = Math.min(Number(be.fvg_proximity_pct ?? 0.003), 0.002);
+        be.ob_proximity_pct = Math.min(Number(be.ob_proximity_pct ?? 0.003), 0.002);
+        be.max_setups = Math.min(Number(be.max_setups ?? 5), 4);
+      } else if (profile === 'aggressive') {
+        be.rr_min = Math.min(Number(be.rr_min ?? 2), 1.6);
+        be.fvg_proximity_pct = Math.max(Number(be.fvg_proximity_pct ?? 0.003), 0.0045);
+        be.ob_proximity_pct = Math.max(Number(be.ob_proximity_pct ?? 0.003), 0.0045);
+        be.max_setups = Math.min(Number(be.max_setups ?? 5) + 2, 8);
+      }
+      o.best_engine_params = be;
+      return o;
+    }
+
+    function syncWizardMethodExistingSelect(){
+      const src = document.getElementById('workspaceMethodSelect');
+      const dst = document.getElementById('wizardMethodExistingSelect');
+      if (!src || !dst) return;
+      const cur = src.value;
+      dst.innerHTML = '';
+      [...src.options].forEach((o) => {
+        if (!o.value) return;
+        const n = document.createElement('option');
+        n.value = o.value;
+        n.textContent = o.textContent;
+        dst.appendChild(n);
+      });
+      if (cur && [...dst.options].some((x) => x.value === cur)) dst.value = cur;
+      else if (dst.options.length) dst.selectedIndex = 0;
+    }
+
+    function initTabs(){
+      document.querySelectorAll('.tab').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const id = btn.getAttribute('data-tab');
+          document.querySelectorAll('.tab').forEach((b) => {
+            const on = b.getAttribute('data-tab') === id;
+            b.classList.toggle('active', on);
+            b.setAttribute('aria-selected', on ? 'true' : 'false');
+          });
+          document.querySelectorAll('.tab-panel').forEach((p) => {
+            p.classList.toggle('active', p.id === id);
+          });
+          if (id === 'tab-dataset') syncOhlcvFetchHint();
+          if (id === 'tab-simulation') updateWorkspaceActiveLine();
+          if (id === 'tab-methods') {
+            syncPeriodUi();
+            syncWizardMethodExistingSelect();
+            refreshAnalysisWindowPreview().catch(() => {});
+          }
+        });
+      });
+      document.querySelectorAll('[data-go-tab]').forEach((b) => {
+        b.addEventListener('click', () => {
+          const tid = b.getAttribute('data-go-tab');
+          const tabBtn = document.querySelector('.tab[data-tab="' + tid + '"]');
+          if (tabBtn) tabBtn.click();
+        });
+      });
+    }
+
+    async function persistWorkspaceSelection(){
+      const ds = document.getElementById('workspaceDatasetSelect').value;
+      const mfRaw = document.getElementById('workspaceMethodSelect').value;
+      const mf = mfRaw === '' ? null : mfRaw;
+      const legacy = mapWorkspaceToLegacySrc(ds);
+      const res = await fetch('/api/v1/control/state', {
+        method: 'PUT',
+        headers: headers(),
+        body: JSON.stringify({
+          dashboard_dataset_file: ds,
+          dashboard_method_file: mf,
+          backtest_ohlcv_source: legacy,
+        }),
+      });
+      const j = await res.json();
+      if (!res.ok) {
+        out(j);
+        return;
+      }
+      const st = await fetch('/api/v1/control/state');
+      cachedControlState = await st.json();
+      document.getElementById('backtestOhlcvSource').value = legacy;
+      updateWorkspaceActiveLine();
+      syncActionSymbolTfFromWorkspaceDataset();
+      syncOhlcvFetchHint();
+      await refreshMethodFormDisplay(cachedControlState);
+    }
+
+    async function refreshWorkspaceSelects(){
+      const res = await fetch('/api/v1/control/workspace');
+      const w = await res.json();
+      cachedMethodFileNames = (w.method_files || []).map((f) => (typeof f === 'string' ? f : f.name)).filter(Boolean);
+      const dsSel = document.getElementById('workspaceDatasetSelect');
+      const mfSel = document.getElementById('workspaceMethodSelect');
+      const curDs = cachedControlState && cachedControlState.dashboard_dataset_file
+        ? String(cachedControlState.dashboard_dataset_file)
+        : '__live__';
+      const curMf = cachedControlState && cachedControlState.dashboard_method_file
+        ? String(cachedControlState.dashboard_method_file)
+        : '';
+      dsSel.innerHTML = '';
+      (w.dataset_sentinels || []).forEach((s) => {
+        const o = document.createElement('option');
+        o.value = s.value;
+        o.textContent = s.label;
+        dsSel.appendChild(o);
+      });
+      (w.dataset_files || []).forEach((f) => {
+        const o = document.createElement('option');
+        o.value = f.name;
+        o.textContent = 'CSV : ' + f.name + ' (' + (f.bytes ?? 0) + ' octets)';
+        dsSel.appendChild(o);
+      });
+      if (curDs && [...dsSel.options].some((o) => o.value === curDs)) dsSel.value = curDs;
+      else if (curDs) {
+        const o = document.createElement('option');
+        o.value = curDs;
+        o.textContent = curDs + ' (fichier absent du dossier)';
+        dsSel.appendChild(o);
+        dsSel.value = curDs;
+      } else {
+        dsSel.value = '__live__';
+      }
+      mfSel.innerHTML = '';
+      const o0 = document.createElement('option');
+      o0.value = '';
+      o0.textContent = '— Aucun JSON —';
+      mfSel.appendChild(o0);
+      (w.method_files || []).forEach((f) => {
+        const o = document.createElement('option');
+        o.value = f.name;
+        o.textContent = f.name;
+        mfSel.appendChild(o);
+      });
+      if (curMf && [...mfSel.options].some((o) => o.value === curMf)) mfSel.value = curMf;
+      else if (curMf) {
+        const ox = document.createElement('option');
+        ox.value = curMf;
+        ox.textContent = curMf + ' (absent du dossier)';
+        mfSel.appendChild(ox);
+        mfSel.value = curMf;
+      } else {
+        mfSel.value = '';
+      }
+      const hint = document.getElementById('workspaceHint');
+      if (hint) {
+        hint.textContent =
+          'Datasets : ' + (w.datasets_dir || '') + ' | Méthodes : ' + (w.methods_dir || '');
+      }
+      syncActionSymbolTfFromWorkspaceDataset();
+      const mfh = document.getElementById('methodsFilesHint');
+      if (mfh) {
+        const n = (w.method_files || []).length;
+        const cur = curMf ? String(curMf) : '';
+        mfh.textContent =
+          n +
+          ' fichier(s) .json listé(s). Dossier : ' +
+          (w.methods_dir || '—') +
+          (cur ? ' · Méthode active (état) : ' + cur : '');
+      }
+      document.getElementById('backtestOhlcvSource').value = mapWorkspaceToLegacySrc(dsSel.value);
+      updateWorkspaceActiveLine();
+    }
+
+    let currentRegistry = { active_model_id:null, items:[] };
+    let cachedControlState = null;
+    /** Noms de fichiers .json (basename) listés dans le workspace méthodes. */
+    let cachedMethodFileNames = [];
+    /** Base JSON (clés hors formulaire conservées à la sauvegarde). */
+    let _methodEditorBase = {};
+
+    const DEFAULT_METHOD_TEMPLATE = {
+      comment_fr:
+        'Profil méthode — enregistre sous un nouveau nom dans data/dashboard_methods/ puis sélectionne-le dans la liste.',
+      symbols: ['BTC/USDT'],
+      timeframes: ['5m', '15m', '1h'],
+      scan_limit: 600,
+      best_engine_params: {
+        rr_min: 2,
+        fvg_proximity_pct: 0.004,
+        ob_proximity_pct: 0.004,
+        max_setups: 4,
+        swing_left: 3,
+        swing_right: 3,
+      },
+      unit_size: 1,
+      entry_fee_rate: 0.0004,
+      exit_fee_rate: 0.0004,
+      funding_rate_8h: 0,
+      auto_fee_from_exchange: false,
+      auto_funding_from_exchange: false,
+      fee_market_type: 'swap',
+      require_ifvg_confluence: false,
+      ifvg_confluence_pct: 0.008,
+      require_rsi_divergence: false,
+      training_bars: 120,
+      max_holding_bars: 120,
+      max_setups_per_bar: 1,
+      auto_parameters: true,
+      telegram_enabled: false,
+      analysis_period_preset: DEFAULT_ANALYSIS_PERIOD_PRESET,
+      period_max_bars: 5000,
+      backtest_limit: 1200,
+      optimize_limit: 1200,
+      top_optimization: 5,
+      wf_splits: 3,
+      optimization_objective: 'net_pnl_quote',
+      optimization_strategy: 'exhaustive',
+      optimization_max_trials: 200,
+      optimization_grid: {
+        rr_min_values: [1.8, 2.0, 2.2, 2.5],
+        fvg_proximity_values: [0.003, 0.004, 0.006],
+        ob_proximity_values: [0.003, 0.004, 0.006],
+        swing_left_values: [2, 3, 4],
+        swing_right_values: [2, 3, 4],
+        max_setups_values: [3, 4, 5],
+      },
+    };
+
+    function syncOhlcvFetchHint(){
+      const wsEl = document.getElementById('workspaceDatasetSelect');
+      const el = document.getElementById('ohlcvModeHelp');
+      if (!el) return;
+      if (!wsEl || !wsEl.options || wsEl.options.length === 0) {
+        el.textContent = 'Chargement des options workspace…';
+        return;
+      }
+      const src =
+        wsEl && wsEl.options && wsEl.options.length
+          ? wsEl.value
+          : document.getElementById('backtestOhlcvSource').value;
+      const dual = document.getElementById('ohlcvDualWrite');
+      const isLive = src === 'live' || src === '__live__';
+      const isDb = src === 'database' || src === '__database__';
+      const isFile =
+        src === 'file' || src === '__auto_csv__' || (typeof src === 'string' && src.endsWith('.csv'));
+      if (isLive) {
+        dual.disabled = true;
+        dual.checked = false;
+        el.textContent =
+          "Live : le bouton « Télécharger » interroge l'exchange (résumé ci-dessous). Le backtest recharge les bougies depuis l'exchange.";
+      } else if (isDb) {
+        dual.disabled = false;
+        el.textContent =
+          'PostgreSQL : « Télécharger » upsert en base. Option avancée : copie CSV en plus si cochée.';
+      } else if (isFile) {
+        dual.disabled = true;
+        dual.checked = false;
+        el.textContent =
+          src.endsWith('.csv')
+            ? 'Dataset workspace : le backtest lit le fichier choisi dans data/dashboard_datasets/. « Télécharger » enregistre le CSV auto (SYMBOLE__tf) pour copie.'
+            : 'CSV auto (data/ohlcv) : « Télécharger » écrit le fichier conventionnel SYMBOLE__timeframe.csv.';
+      } else {
+        dual.disabled = true;
+        el.textContent = 'Sélection de données non reconnue.';
+      }
+    }
+
+    function syncPeriodUi(){
+      const custom = document.getElementById('analysisPeriodPreset').value === 'custom';
+      document.getElementById('customBacktestCell').style.display = custom ? '' : 'none';
+      document.getElementById('customOptimizeCell').style.display = custom ? '' : 'none';
+      refreshAnalysisWindowPreview().catch(() => {});
+    }
+
+    async function refreshAnalysisWindowPreview(){
+      const tfEl = document.getElementById('actionTf');
+      const tf = tfEl && tfEl.value ? encodeURIComponent(tfEl.value.trim()) : encodeURIComponent('1h');
+      const preset = encodeURIComponent(document.getElementById('analysisPeriodPreset').value);
+      const cap = Number(document.getElementById('periodMaxBars').value);
+      const bt = Number(document.getElementById('backtestLimit').value);
+      const opt = Number(document.getElementById('optimizeLimit').value);
+      const q = `timeframe=${tf}&analysis_period_preset=${preset}&period_max_bars=${cap}&backtest_limit=${bt}&optimize_limit=${opt}`;
+      const el = document.getElementById('periodWindowHint');
+      try {
+        const res = await fetch(`/api/v1/control/analysis-window?${q}`);
+        const j = await res.json();
+        if (!res.ok) {
+          el.textContent = typeof j.detail === 'string' ? j.detail : jsonStringifyWithLocalTimes(j);
+          return;
+        }
+        el.textContent = j.hint_fr || jsonStringifyWithLocalTimes(j);
+      } catch (e) {
+        el.textContent = 'Aperçu indisponible : ' + String(e);
+      }
+    }
+
+    function setSelectOptions(selectId, values, preferred){
+      const el = document.getElementById(selectId);
+      const cur = preferred || el.value;
+      el.innerHTML = '';
+      (values || []).forEach(v => {
+        const op = document.createElement('option');
+        op.value = v; op.textContent = v;
+        el.appendChild(op);
+      });
+      if(cur && (values || []).includes(cur)) el.value = cur;
+    }
+
+    function setSymbolDatalist(values, preferred){
+      const dl = document.getElementById('symbolDatalist');
+      const inp = document.getElementById('actionSymbol');
+      if (!dl || !inp) return;
+      dl.innerHTML = '';
+      (values || []).forEach((v) => {
+        const o = document.createElement('option');
+        o.value = v;
+        dl.appendChild(o);
+      });
+      const list = values || [];
+      const cur = preferred || inp.value;
+      if (cur && list.includes(cur)) inp.value = cur;
+      else if (list.length) inp.value = list[0];
+    }
+
+    function paramsShort(p){
+      if(!p) return '';
+      return `rr=${p.rr_min} fvg=${p.fvg_proximity_pct} ob=${p.ob_proximity_pct} sw=${p.swing_left}/${p.swing_right} ms=${p.max_setups}`;
+    }
+
+    function formatMethodTraceLine(lo){
+      if (!lo || typeof lo !== 'object') return 'Méthode : —';
+      const mf = lo.method_file;
+      if (!mf) {
+        return (
+          'Méthode : aucun fichier JSON sélectionné au moment du run ' +
+          '(la grille vient de l’état local / défauts ; rien n’a été fusionné depuis un fichier).'
+        );
+      }
+      const sha = lo.method_sha256 ? String(lo.method_sha256).slice(0, 14) + '…' : 'fichier absent ou hash indisponible';
+      const ov = lo.method_overlay_applied ? 'overlay JSON fusionné dans l’état effectif' : 'overlay non appliqué';
+      return 'Méthode : « ' + mf + ' » · ' + ov + ' · sha256 ' + sha;
+    }
+
+    function formatOhlcvLoadSummary(meta){
+      if (!meta || typeof meta !== 'object') {
+        return (
+          'Données : (détail absent dans ce rapport — relance une optimisation avec le serveur à jour pour enregistrer la source.)'
+        );
+      }
+      const src = meta.ohlcv_source_used || '';
+      const n = meta.rows_loaded != null ? String(meta.rows_loaded) : '?';
+      if (meta.workspace_dataset_basename) {
+        return 'Données : CSV workspace « ' + meta.workspace_dataset_basename + ' » · ' + n + ' lignes chargées';
+      }
+      if (src === 'live' || meta.dashboard_dataset_file === '__live__') {
+        return 'Données : CCXT live (__live__) · ' + n + ' bougies';
+      }
+      if (src === 'database' || meta.dashboard_dataset_file === '__database__') {
+        return 'Données : PostgreSQL · ' + n + ' lignes';
+      }
+      if (src === 'file' || src === 'file_auto') {
+        const p = meta.ohlcv_file_path || '';
+        return 'Données : fichier local · ' + n + ' lignes · ' + p;
+      }
+      return 'Données : ' + (src || 'inconnu') + ' · ' + n + ' lignes';
+    }
+
+    function renderOptimizationSummary(lo){
+      const prov = document.getElementById('optRunProvenance');
+      const hint = document.getElementById('optRankingHint');
+      const tb = document.querySelector('#optimizationSummaryTable tbody');
+      tb.innerHTML = '';
+      if(!lo || !lo.top || !lo.top.length){
+        if (prov) prov.textContent = '';
+        hint.textContent = 'Aucune optimisation en mémoire. Lance « Lancer Optimisation » (onglet Simulation).';
+        document.getElementById('lastOptimization').textContent = '-';
+        return;
+      }
+      if (prov) {
+        const symTf = (lo.symbol || '—') + ' · ' + (lo.timeframe || '—');
+        prov.textContent =
+          'Ce résultat concerne le run : ' +
+          symTf +
+          '\n' +
+          formatMethodTraceLine(lo) +
+          '\n' +
+          formatOhlcvLoadSummary(lo.ohlcv_load);
+      }
+      const obj = lo.objective || '';
+      const ncomb = lo.combinations_tested != null ? lo.combinations_tested : '?';
+      const diagFr =
+        lo.optimization_diagnostics && lo.optimization_diagnostics.interpretation_fr
+          ? ' ' + String(lo.optimization_diagnostics.interpretation_fr)
+          : '';
+      hint.textContent =
+        (lo.ranking_explanation_fr || '') +
+        ` — Objectif actuel : ${obj}. Combinaisons testées : ${ncomb}.` +
+        diagFr;
+      lo.top.forEach((row) => {
+        const tr = document.createElement('tr');
+        const wr = row.win_rate != null ? (Math.round(row.win_rate * 10000) / 100) + '%' : '-';
+        const pf = row.profit_factor == null ? '-' : String(row.profit_factor);
+        tr.innerHTML = `<td><strong>${row.rank}</strong></td><td class="num">${wr}</td><td class="num">${row.realized_gains_quote ?? ''}</td><td class="num">${row.realized_losses_quote ?? ''}</td><td class="num">${row.net_pnl_quote ?? ''}</td><td class="num">${row.trades ?? ''}</td><td class="num">${pf}</td><td class="num">${row.max_drawdown_quote ?? ''}</td><td style="font-size:12px;">${paramsShort(row.params)}</td>`;
+        tb.appendChild(tr);
+      });
+      document.getElementById('lastOptimization').textContent = jsonStringifyWithLocalTimes(lo);
+    }
+
+    function renderLastWfOos(lo){
+      const pre = document.getElementById('lastWfOos');
+      const prov = document.getElementById('wfRunProvenance');
+      if (pre) pre.textContent = lo != null ? jsonStringifyWithLocalTimes(lo) : '-';
+      if (!prov) return;
+      if (!lo || typeof lo !== 'object') {
+        prov.textContent = '';
+        return;
+      }
+      const lines = [];
+      lines.push(
+        'Ce walk-forward concerne : ' +
+          (lo.symbol || '—') +
+          ' · ' +
+          (lo.timeframe || '—') +
+          ' · wf_splits demandé=' +
+          (lo.wf_splits != null ? lo.wf_splits : '—') +
+          (lo.n_splits_effective != null ? ' · effectif=' + lo.n_splits_effective : ''),
+      );
+      lines.push(formatMethodTraceLine(lo));
+      lines.push(formatOhlcvLoadSummary(lo.ohlcv_load));
+      if (lo.ok === false && lo.error) lines.push('Erreur : ' + lo.error);
+      else if (lo.oos_summary && lo.oos_summary.interpretation_fr) lines.push(String(lo.oos_summary.interpretation_fr));
+      prov.textContent = lines.join('\n');
+    }
+
+    function exportOptimizationCsv(){
+      const lo = cachedControlState?.last_optimization;
+      if(!lo || !lo.top || !lo.top.length){ out({error:'Pas de données optimisation à exporter'}); return; }
+      const cols = ['rank','win_rate','realized_gains_quote','realized_losses_quote','net_pnl_quote','trades','wins','losses','profit_factor','net_r','expectancy_r','max_drawdown_quote','total_fees_quote','total_funding_quote','params_json'];
+      const esc = (v) => {
+        const s = v === undefined || v === null ? '' : String(v);
+        if(/[",\n]/.test(s)) return '"' + s.replace(/"/g,'""') + '"';
+        return s;
+      };
+      const lines = [cols.join(',')];
+      lo.top.forEach((row) => {
+        const pj = esc(JSON.stringify(row.params || {}));
+        lines.push([
+          row.rank, row.win_rate, row.realized_gains_quote, row.realized_losses_quote, row.net_pnl_quote,
+          row.trades, row.wins, row.losses, row.profit_factor, row.net_r, row.expectancy_r,
+          row.max_drawdown_quote, row.total_fees_quote, row.total_funding_quote, pj
+        ].join(','));
+      });
+      const blob = new Blob([lines.join('\n')], {type:'text/csv;charset=utf-8'});
+      const a = document.createElement('a');
+      const sym = (lo.symbol || 'sym').replace(/[^\w.-]+/g,'_');
+      a.href = URL.createObjectURL(blob);
+      a.download = `optimization_resume_${sym}_${lo.timeframe || 'tf'}.csv`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      out({message:'CSV exporté', fichier: a.download});
+    }
+
+    async function loadState(){
+      const res = await fetch('/api/v1/control/state');
+      const s = await res.json();
+      cachedControlState = s;
+      const eff = s.effective_run && typeof s.effective_run === 'object' ? s.effective_run : s;
+      const optRes = await fetch('/api/v1/control/options');
+      const opts = await optRes.json();
+      setSymbolDatalist(
+        opts.symbols || eff.symbols || [],
+        (opts.symbols || [])[0] || (eff.symbols || [])[0]
+      );
+      setSelectOptions('actionTf', opts.timeframes || eff.timeframes || [], (opts.timeframes || [])[0]);
+      const pls = document.getElementById('paperLiveSymbol');
+      const plt = document.getElementById('paperLiveTimeframe');
+      const pli = document.getElementById('paperLiveInterval');
+      if (pls) pls.value = s.paper_live_symbol || '';
+      if (plt) plt.value = s.paper_live_timeframe || '';
+      if (pli) pli.value = s.paper_live_interval_sec ?? 90;
+      const pbe = document.getElementById('paperExecutionBackend');
+      const pox = document.getElementById('paperOhlcvExchangeId');
+      const effPaper = eff.paper_execution_backend != null ? eff : s;
+      if (pbe) {
+        const v = String(effPaper.paper_execution_backend || 'sim_replay').toLowerCase();
+        pbe.value = v === 'bitget_futures_sim' ? 'bitget_futures_sim' : 'sim_replay';
+      }
+      if (pox) pox.value = effPaper.paper_ohlcv_exchange_id != null ? String(effPaper.paper_ohlcv_exchange_id) : '';
+      await refreshPaperLiveStatusPre();
+      await refreshMethodFormDisplay(s);
+      syncPeriodUi();
+      document.getElementById('lastBacktest').textContent = jsonStringifyWithLocalTimes(s.last_backtest);
+      renderOptimizationSummary(s.last_optimization);
+      renderLastWfOos(s.last_wf_oos);
+      document.getElementById('lastOhlcvFetch').textContent =
+        s.last_ohlcv_fetch != null ? jsonStringifyWithLocalTimes(s.last_ohlcv_fetch) : '-';
+      datasetOpReflectFromState(s);
+      try {
+        await refreshOhlcvStatus();
+      } catch (e) {
+        document.getElementById('ohlcvDataStatus').textContent = 'Erreur statut OHLCV: ' + String(e);
+      }
+      await refreshAnalysisWindowPreview();
+      await refreshWorkspaceSelects();
+      document.getElementById('backtestOhlcvSource').value = mapWorkspaceToLegacySrc(
+        document.getElementById('workspaceDatasetSelect').value
+      );
+      syncOhlcvFetchHint();
+      updateDatasetBarsPreview();
+      currentRegistry = s.model_registry || {active_model_id:null, items:[]};
+      renderModels(currentRegistry, s);
+      // Bandeau paper : déjà à jour via refreshPaperLiveStatusPre() ; éviter un 2e rendu avec s figé (paper_live vieux).
+      updateWorkspaceActiveLine();
+    }
+
+    async function persistBacktestWindow(){
+      const patch = methodObjectToStatePatch(collectMethodFormObject());
+      const body = {
+        analysis_period_preset: patch.analysis_period_preset,
+        period_max_bars: patch.period_max_bars,
+        backtest_ohlcv_source: mapWorkspaceToLegacySrc(document.getElementById('workspaceDatasetSelect').value),
+        dashboard_dataset_file: document.getElementById('workspaceDatasetSelect').value,
+        dashboard_method_file: document.getElementById('workspaceMethodSelect').value || null,
+        auto_fee_from_exchange: patch.auto_fee_from_exchange,
+        fee_market_type: patch.fee_market_type,
+        auto_funding_from_exchange: patch.auto_funding_from_exchange,
+        wf_splits: patch.wf_splits,
+        replay_trail_after_r: patch.replay_trail_after_r,
+        replay_trail_atr_mult: patch.replay_trail_atr_mult,
+        replay_trail_atr_period: patch.replay_trail_atr_period,
+        require_ifvg_confluence: patch.require_ifvg_confluence,
+        ifvg_confluence_pct: patch.ifvg_confluence_pct,
+        require_rsi_divergence: patch.require_rsi_divergence,
+        backtest_limit: patch.backtest_limit,
+        optimize_limit: patch.optimize_limit,
+        top_optimization: patch.top_optimization,
+        optimization_objective: patch.optimization_objective,
+        optimization_strategy: patch.optimization_strategy,
+        optimization_max_trials: patch.optimization_max_trials,
+        optimization_grid: patch.optimization_grid,
+        auto_parameters: patch.auto_parameters,
+        ...paperLivePatch(),
+      };
+      const res = await fetch('/api/v1/control/state', { method: 'PUT', headers: headers(), body: JSON.stringify(body) });
+      if (!res.ok) {
+        out(await res.json());
+        return false;
+      }
+      return true;
+    }
+
+    async function pullExchangeFees(){
+      const symbol = encodeURIComponent(document.getElementById('actionSymbol').value.trim());
+      const res = await fetch(`/api/v1/control/exchange-market-info?symbol=${symbol}`);
+      const j = await res.json();
+      out(j);
+    }
+
+    async function refreshOhlcvStatus(){
+      const symbol = encodeURIComponent(document.getElementById('actionSymbol').value.trim());
+      const tf = encodeURIComponent(document.getElementById('actionTf').value.trim());
+      const res = await fetch(`/api/v1/control/ohlcv-data-status?symbol=${symbol}&timeframe=${tf}`);
+      const raw = await res.text();
+      let j;
+      try {
+        j = JSON.parse(raw);
+      } catch {
+        j = { http_status: res.status, error: raw };
+      }
+      document.getElementById('ohlcvDataStatus').textContent = jsonStringifyWithLocalTimes(j);
+    }
+
+    async function runFetchOhlcv(){
+      if (!(await persistBacktestWindow())) return;
+      const symRaw = document.getElementById('actionSymbol').value.trim();
+      const tfRaw = document.getElementById('actionTf').value.trim();
+      if (!symRaw || !tfRaw) {
+        out({ erreur: 'Symbole et timeframe obligatoires.' });
+        return;
+      }
+      const symbol = encodeURIComponent(symRaw);
+      const tf = encodeURIComponent(tfRaw);
+      const ws = document.getElementById('workspaceDatasetSelect').value;
+      let persist = false;
+      let saveFile = false;
+      if (ws === '__database__') {
+        persist = true;
+        if (document.getElementById('ohlcvDualWrite').checked) saveFile = true;
+      } else if (ws === '__auto_csv__' || (ws && ws.endsWith('.csv'))) saveFile = true;
+      datasetFetchSetBusy(true, 'legacy');
+      datasetOpSetStyle('busy');
+      datasetOpSetHtml(
+        '<strong>En cours</strong> : téléchargement « mode liste » (option <code>' +
+          escapeHtml(ws || '') +
+          '</code>)… PostgreSQL : ' +
+          (persist ? 'oui' : 'non') +
+          ' · CSV auto : ' +
+          (saveFile ? 'oui' : 'non') +
+          '.',
+      );
+      try {
+        const res = await fetch(
+          `/api/v1/control/actions/fetch-ohlcv?symbol=${symbol}&timeframe=${tf}&persist=${persist ? 'true' : 'false'}&save_to_file=${saveFile ? 'true' : 'false'}`,
+          { method: 'POST', headers: headers() }
+        );
+        const data = await res.json();
+        out(data);
+        if (!res.ok) {
+          datasetOpSetStyle('err');
+          const det =
+            typeof data.detail === 'string'
+              ? data.detail
+              : data.detail != null
+                ? JSON.stringify(data.detail)
+                : JSON.stringify(data);
+          datasetOpSetHtml('<strong>Erreur</strong> (mode liste) HTTP ' + res.status + ' : ' + escapeHtml(det));
+          return;
+        }
+        if (data.ok) {
+          datasetOpSetStyle('ok');
+          datasetOpSetHtml(
+            '<strong>Terminé</strong> (mode liste) : ' +
+              escapeHtml(String(data.bars ?? '?')) +
+              ' bougies. PostgreSQL : ' +
+              (data.persisted_to_postgres ? 'oui' : 'non') +
+              ' · Fichier CSV : ' +
+              (data.saved_to_file ? 'oui' : 'non') +
+              '.',
+          );
+        } else {
+          datasetOpSetStyle('err');
+          datasetOpSetHtml(
+            '<strong>Échec</strong> (mode liste) : ' + escapeHtml(String(data.detail || 'sans détail')),
+          );
+        }
+        await loadState();
+      } catch (e) {
+        datasetOpSetStyle('err');
+        datasetOpSetHtml('<strong>Erreur réseau</strong> (mode liste) : ' + escapeHtml(String(e)));
+        out(String(e));
+      } finally {
+        datasetFetchSetBusy(false, null);
+      }
+    }
+
+    async function runBacktest(){
+      if (!(await persistBacktestWindow())) return;
+      const symbol = encodeURIComponent(document.getElementById('actionSymbol').value.trim());
+      const tf = encodeURIComponent(document.getElementById('actionTf').value.trim());
+      const res = await fetch(`/api/v1/control/actions/backtest?symbol=${symbol}&timeframe=${tf}`, {method:'POST', headers: headers()});
+      const data = await res.json();
+      out(data);
+      await loadState();
+    }
+    async function runOptimize(){
+      if (!(await persistBacktestWindow())) return;
+      const hintEl = document.getElementById('optimizationRunHint');
+      if (hintEl) hintEl.textContent = 'Optimisation en cours…';
+      const symbol = encodeURIComponent(document.getElementById('actionSymbol').value.trim());
+      const tf = encodeURIComponent(document.getElementById('actionTf').value.trim());
+      const res = await fetch(`/api/v1/control/actions/optimize?symbol=${symbol}&timeframe=${tf}`, {method:'POST', headers: headers()});
+      const data = await res.json();
+      if (hintEl) {
+        if (!res.ok) {
+          hintEl.textContent =
+            typeof data.detail === 'string' ? data.detail : 'Erreur (détail dans Messages API).';
+        } else if (data.method_file_update && data.method_file_update.ok) {
+          hintEl.textContent =
+            'Terminé : Top-1 enregistré dans « ' +
+            (data.method_file_update.basename || '') +
+            ' » (best_engine_params). Voir tableau + JSON.';
+        } else if (data.method_file_update && data.method_file_update.skipped) {
+          hintEl.textContent =
+            (data.method_file_update.hint_fr || 'Fichier méthode non mis à jour.') +
+            ' Les paramètres Top-1 sont dans l’état local et le rapport.';
+        } else if (data.method_file_update && !data.method_file_update.ok) {
+          hintEl.textContent =
+            'Optim terminée mais écriture méthode : ' + (data.method_file_update.error || 'erreur inconnue');
+        } else hintEl.textContent = '';
+      }
+      out(data);
+      await loadState();
+    }
+
+    const DEFAULT_OPT_BATCH_JSON = {
+      jobs: [
+        {
+          source_method: 'essaie1.json',
+          optimization_objective: 'net_pnl_quote',
+          label: 'net_pnl',
+        },
+        {
+          source_method: 'essaie1.json',
+          optimization_objective: 'penalized_pnl_quote',
+          optimization_strategy: 'coordinate_descent',
+          label: 'penalized_cd',
+        },
+      ],
+    };
+
+    function initOptBatchTextarea(){
+      const ta = document.getElementById('optBatchQueueJson');
+      if (!ta || ta.value.trim()) return;
+      ta.value = JSON.stringify(DEFAULT_OPT_BATCH_JSON, null, 2);
+    }
+
+    async function runOptimizeBatch(){
+      if (!(await persistBacktestWindow())) return;
+      const hintEl = document.getElementById('optimizationRunHint');
+      const ta = document.getElementById('optBatchQueueJson');
+      if (!ta) return;
+      let body;
+      try {
+        body = JSON.parse(ta.value || '{}');
+      } catch (e) {
+        if (hintEl) hintEl.textContent = 'JSON invalide dans la file : ' + String(e);
+        out({ error: 'invalid_json', detail: String(e) });
+        return;
+      }
+      if (!body || !Array.isArray(body.jobs) || body.jobs.length === 0) {
+        if (hintEl) hintEl.textContent = 'Le JSON doit contenir un tableau « jobs » non vide.';
+        return;
+      }
+      if (hintEl) {
+        hintEl.textContent =
+          'File d’optimisations en cours (' +
+          body.jobs.length +
+          ' job(s)) — peut prendre longtemps selon la grille. Patiente…';
+      }
+      const symbol = encodeURIComponent(document.getElementById('actionSymbol').value.trim());
+      const tf = encodeURIComponent(document.getElementById('actionTf').value.trim());
+      const res = await fetch(
+        `/api/v1/control/actions/optimize-batch?symbol=${symbol}&timeframe=${tf}`,
+        { method: 'POST', headers: { ...headers(), 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+      );
+      const data = await res.json();
+      if (hintEl) {
+        if (!res.ok) {
+          hintEl.textContent =
+            typeof data.detail === 'string' ? data.detail : 'Erreur file d’optimisations (voir Messages API).';
+        } else if (data.ok) {
+          const outs = (data.jobs || [])
+            .filter((j) => j.output_method && j.output_method.basename)
+            .map((j) => j.output_method.basename);
+          hintEl.textContent =
+            'File terminée : ' +
+            (outs.length ? outs.join(', ') : 'voir JSON') +
+            ' (nouveaux fichiers dans data/dashboard_methods/).';
+        } else {
+          hintEl.textContent =
+            'File terminée avec erreurs sur un ou plusieurs jobs — détail dans le JSON (Messages API).';
+        }
+      }
+      out(data);
+      await loadState();
+    }
+
+    async function runOptimizeWalkForward(){
+      if (!(await persistBacktestWindow())) return;
+      const hintEl = document.getElementById('optimizationRunHint');
+      if (hintEl) {
+        hintEl.textContent =
+          'Walk-forward en cours (plusieurs optimisations + backtests OOS) — peux prendre plusieurs minutes. Patiente…';
+      }
+      const symbol = encodeURIComponent(document.getElementById('actionSymbol').value.trim());
+      const tf = encodeURIComponent(document.getElementById('actionTf').value.trim());
+      const wf = Number(document.getElementById('wfSplits').value) || 3;
+      const res = await fetch(
+        `/api/v1/control/actions/optimize-walk-forward?symbol=${symbol}&timeframe=${tf}&wf_splits=${wf}`,
+        { method: 'POST', headers: headers() }
+      );
+      const data = await res.json();
+      if (hintEl) {
+        if (!res.ok) {
+          hintEl.textContent =
+            typeof data.detail === 'string' ? data.detail : 'Erreur walk-forward (voir Messages API).';
+        } else if (data.ok === false) {
+          hintEl.textContent =
+            'Walk-forward terminé avec problème : ' + (data.error || 'voir JSON OOS ci-dessous.');
+        } else {
+          hintEl.textContent =
+            (data.oos_summary && data.oos_summary.interpretation_fr) ||
+            'Walk-forward terminé — voir le résumé sous le titre + le JSON détaillé.';
+        }
+      }
+      out(data);
+      await loadState();
+    }
+
+    function modelParamsText(p){
+      if(!p) return '-';
+      return `rr=${p.rr_min}, fvg=${p.fvg_proximity_pct}, ob=${p.ob_proximity_pct}, swing=${p.swing_left}/${p.swing_right}`;
+    }
+    function methodBasename(mf){
+      if (!mf) return '';
+      const s = String(mf).trim().replace(/\\/g, '/');
+      const i = s.lastIndexOf('/');
+      return i >= 0 ? s.slice(i + 1) : s;
+    }
+    /** stats = { last_backtest?, from_optimization? } (registre ou synthèse fichier méthode). */
+    function modelStatsText(stats){
+      if (!stats || typeof stats !== 'object') return '-';
+      let b = stats.last_backtest;
+      if (!b && stats.from_optimization) {
+        const o = stats.from_optimization;
+        b = {
+          total_trades: o.trades,
+          win_rate: o.win_rate,
+          profit_factor: o.profit_factor,
+          net_r: o.net_r,
+          net_pnl_quote: o.net_pnl_quote,
+          max_drawdown_quote: o.max_drawdown_quote,
+        };
+      }
+      if (!b) return '-';
+      const pfRaw = b.profit_factor;
+      const pf =
+        pfRaw === Infinity || pfRaw === 'Infinity'
+          ? 'inf'
+          : pfRaw != null && Number.isFinite(Number(pfRaw))
+            ? Number(pfRaw).toFixed(2)
+            : '—';
+      const rankHint = stats.from_optimization && stats.from_optimization.rank != null
+        ? `opt#${stats.from_optimization.rank} · `
+        : '';
+      return (
+        rankHint +
+        `trades=${b.total_trades ?? '—'}, wr=${Math.round((b.win_rate || 0) * 100)}%, PF=${pf}, netR=${Number(b.net_r || 0).toFixed(2)}, netQ=${Number(b.net_pnl_quote || 0).toFixed(2)}, DD=${Number(b.max_drawdown_quote || 0).toFixed(2)}`
+      );
+    }
+    function renderModels(reg, state){
+      const tb = document.querySelector('#modelsTable tbody');
+      tb.innerHTML = '';
+      const r0 = document.createElement('tr');
+      r0.innerHTML =
+        '<td colspan="7" class="muted" style="font-size:12px;padding:8px 6px;border-bottom:1px solid #334155;"><strong>Registre</strong> — profils internes : un seul <strong>modèle actif</strong> à la fois (boutons Activer / Backtest / Paper). Ce n&apos;est pas la même chose que le fichier méthode JSON ci-dessous.</td>';
+      tb.appendChild(r0);
+      (reg.items || []).forEach(m => {
+        const tr = document.createElement('tr');
+        const active = reg.active_model_id === m.id;
+        tr.innerHTML = `
+          <td>${escapeHtml(m.name)}</td>
+          <td>${active ? '<span class="badge ok" title="Ce profil est le modèle actif du registre (priorité sur certains runs).">Oui</span>' : '<span class="badge off" title="Autre profil du registre.">Non</span>'}</td>
+          <td class="muted" title="Choisis un JSON workspace sur la ligne du fichier méthode.">—</td>
+          <td>${m.paper_enabled ? '<span class="badge ok">ON</span>' : '<span class="badge off">OFF</span>'}</td>
+          <td>${modelParamsText(m.params)}</td>
+          <td style="max-width:420px;white-space:normal;font-size:12px;">${escapeHtml(modelStatsText(m.stats))}</td>
+          <td>
+            <button data-act="activate" data-id="${m.id}" class="secondary">Activer</button>
+            <button data-act="backtest" data-id="${m.id}" class="warn">Backtest</button>
+            <button data-act="paper" data-id="${m.id}" class="good">${m.paper_enabled ? 'Paper OFF' : 'Paper ON'}</button>
+          </td>`;
+        tb.appendChild(tr);
+      });
+      const r1 = document.createElement('tr');
+      r1.innerHTML =
+        '<td colspan="7" class="muted" style="font-size:12px;padding:10px 6px 8px;border-top:1px solid #334155;border-bottom:1px solid #334155;"><strong>Fichiers méthode</strong> (<code>data/dashboard_methods/</code>) — <strong>JSON courant</strong> = celui choisi dans la liste workspace (backtest / optim). Indépendant du &laquo; modèle actif &raquo; du registre.</td>';
+      tb.appendChild(r1);
+      const sel = methodBasename(state && state.dashboard_method_file);
+      const lastBt = state && state.last_backtest;
+      const lastBtFile = lastBt ? lastBt.method_file || null : null;
+      const paperRunning = !!(state && state.paper_live_running);
+      const eff = state && state.effective_run && typeof state.effective_run === 'object' ? state.effective_run : state;
+      const files = (cachedMethodFileNames || []).length
+        ? cachedMethodFileNames
+        : sel
+          ? [sel]
+          : [];
+      if (!files.length) {
+        const tr = document.createElement('tr');
+        tr.innerHTML =
+          '<td colspan="7" class="muted" style="font-size:12px;">Aucun JSON listé — enregistre une méthode depuis l&apos;onglet <strong>Méthodes</strong> ou rafraîchis le workspace.</td>';
+        tb.appendChild(tr);
+      } else {
+        files.forEach((fn) => {
+          const jsonSelected = sel === fn;
+          const paper = paperRunning && jsonSelected;
+          const statsStr =
+            lastBtFile && lastBtFile === fn ? modelStatsText({ last_backtest: lastBt }) : '-';
+          const paramsTxt = jsonSelected ? modelParamsText(eff && eff.best_engine_params) : '-';
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td><span class="badge" style="opacity:.9">JSON</span> ${escapeHtml(fn)}</td>
+            <td class="muted" title="Colonne registre : sans objet pour un fichier JSON.">—</td>
+            <td>${jsonSelected ? '<span class="badge ok" title="Ce fichier est sélectionné dans la liste workspace pour backtest / optim.">Oui</span>' : '<span class="badge off" title="Autre fichier ; clique Sélectionner pour l&apos;utiliser.">Non</span>'}</td>
+            <td>${paper ? '<span class="badge ok">ON</span>' : '<span class="badge off">OFF</span>'}</td>
+            <td>${escapeHtml(paramsTxt)}</td>
+            <td style="max-width:420px;white-space:normal;font-size:12px;">${escapeHtml(statsStr)}</td>
+            <td>
+              <button type="button" class="secondary" data-method-select="${escapeHtml(fn)}">Sélectionner</button>
+            </td>`;
+          tb.appendChild(tr);
+        });
+      }
+      tb.querySelectorAll('button[data-act]').forEach(btn => {
+        btn.onclick = async () => {
+          const act = btn.dataset.act;
+          const id = btn.dataset.id;
+          const symbol = encodeURIComponent(document.getElementById('actionSymbol').value.trim());
+          const tf = encodeURIComponent(document.getElementById('actionTf').value.trim());
+          if(act === 'activate'){
+            const res = await fetch(`/api/v1/control/models/${id}/activate`, {method:'POST', headers: headers()});
+            out(await res.json()); await loadState(); return;
+          }
+          if(act === 'backtest'){
+            if (!(await persistBacktestWindow())) return;
+            const res = await fetch(`/api/v1/control/models/${id}/backtest?symbol=${symbol}&timeframe=${tf}`, {method:'POST', headers: headers()});
+            out(await res.json()); await loadState(); return;
+          }
+          if(act === 'paper'){
+            const model = (currentRegistry.items || []).find(x => x.id === id);
+            const enabled = !(model?.paper_enabled);
+            const res = await fetch(`/api/v1/control/models/${id}/paper?enabled=${enabled}`, {method:'POST', headers: headers()});
+            out(await res.json()); await loadState(); return;
+          }
+        };
+      });
+      tb.querySelectorAll('button[data-method-select]').forEach((btn) => {
+        btn.onclick = async () => {
+          const fn = btn.getAttribute('data-method-select');
+          const selEl = document.getElementById('workspaceMethodSelect');
+          if (!fn || !selEl) return;
+          if ([...selEl.options].some((o) => o.value === fn)) selEl.value = fn;
+          else {
+            out({ erreur: 'Fichier absent de la liste workspace', fichier: fn });
+            return;
+          }
+          await persistWorkspaceSelection();
+          out({ message: 'Méthode sélectionnée pour les runs', fichier: fn });
+        };
+      });
+    }
+
+    async function createFromOptimization(){
+      const name = document.getElementById('newModelName').value.trim();
+      const body = {rank: 1, name: name || null};
+      const res = await fetch('/api/v1/control/models/from-last-optimization', {method:'POST', headers: headers(), body: JSON.stringify(body)});
+      const data = await res.json();
+      out(data);
+      await loadState();
+    }
+
+    document.getElementById('btnExportOptCsv').onclick = exportOptimizationCsv;
+    document.getElementById('btnMethodRefreshDash').onclick = () =>
+      refreshWorkspaceSelects().catch((e) => out(String(e)));
+    document.getElementById('btnExchangeFees').onclick = () => pullExchangeFees().catch((e) => out(String(e)));
+    document.getElementById('btnFetchOhlcv').onclick = runFetchOhlcv;
+    document.getElementById('btnOhlcvStatus').onclick = () => refreshOhlcvStatus().catch((e) => out(String(e)));
+    document.getElementById('btnBacktest').onclick = runBacktest;
+    document.getElementById('btnOptimize').onclick = () => runOptimize().catch((e) => out(String(e)));
+    document.getElementById('btnOptimizeWf').onclick = () => runOptimizeWalkForward().catch((e) => out(String(e)));
+    const _btnOb = document.getElementById('btnOptimizeBatch');
+    if (_btnOb) _btnOb.onclick = () => runOptimizeBatch().catch((e) => out(String(e)));
+    document.getElementById('btnCreateFromOpt1').onclick = createFromOptimization;
+    document.getElementById('btnRefreshModels').onclick = loadState;
+    document.getElementById('analysisPeriodPreset').addEventListener('change', syncPeriodUi);
+    document.getElementById('backtestOhlcvSource').addEventListener('change', () => {
+      const v = document.getElementById('backtestOhlcvSource').value;
+      const map = { live: '__live__', database: '__database__', file: '__auto_csv__' };
+      const ds = map[v] || '__live__';
+      const dsSel = document.getElementById('workspaceDatasetSelect');
+      if (dsSel && [...dsSel.options].some((o) => o.value === ds)) dsSel.value = ds;
+      persistWorkspaceSelection().catch((e) => out(String(e)));
+    });
+    wireSimOptimizationSelectors();
+    syncSimOptimizationSelectorsFromMethods();
+    initTabs();
+    document.getElementById('btnWorkspaceRefresh').onclick = () =>
+      refreshWorkspaceSelects().catch((e) => out(String(e)));
+    document.getElementById('btnMethodRefresh').onclick = () =>
+      refreshWorkspaceSelects().catch((e) => out(String(e)));
+
+    document.getElementById('wizBtnNew').onclick = () => {
+      document.getElementById('wizMode').style.display = 'none';
+      document.getElementById('wizEdit').style.display = 'none';
+      document.getElementById('wizNew').style.display = '';
+      wizNewShowStep(1);
+      const symEl = document.getElementById('actionSymbol');
+      const tfEl = document.getElementById('actionTf');
+      document.getElementById('wizNewName').value = '';
+      document.getElementById('wizNewSymbols').value = (symEl && symEl.value.trim()) || 'BTC/USDT';
+      document.getElementById('wizNewTfs').value = (tfEl && tfEl.value.trim()) || '5m,15m,1h';
+      const rb = document.querySelector('input[name="wizProfile"][value="balanced"]');
+      if (rb) rb.checked = true;
+    };
+    document.getElementById('wizBtnEdit').onclick = async () => {
+      await refreshWorkspaceSelects().catch((e) => out(String(e)));
+      syncWizardMethodExistingSelect();
+      const dst = document.getElementById('wizardMethodExistingSelect');
+      if (dst && !dst.options.length && (cachedMethodFileNames || []).length) {
+        dst.innerHTML = '';
+        cachedMethodFileNames.forEach((fn) => {
+          const n = document.createElement('option');
+          n.value = fn;
+          n.textContent = fn;
+          dst.appendChild(n);
+        });
+        const cur = document.getElementById('workspaceMethodSelect')?.value;
+        if (cur && [...dst.options].some((o) => o.value === cur)) dst.value = cur;
+      }
+      if (!dst || !dst.options.length) {
+        out({
+          erreur: 'Aucun fichier .json dans le dossier methodes.',
+          astuce: 'Utilise « Nouvelle methode » ou enregistre un JSON depuis le formulaire (Enregistrer sous).',
+        });
+        return;
+      }
+      document.getElementById('wizMode').style.display = 'none';
+      document.getElementById('wizNew').style.display = 'none';
+      document.getElementById('wizEdit').style.display = '';
+    };
+    document.getElementById('wizNewBack0').onclick = () => wizResetToMode();
+    document.getElementById('wizNewNext1').onclick = () => {
+      const raw = document.getElementById('wizNewName').value.trim();
+      if (!raw) {
+        out({ erreur: 'Indique un nom (ex: btc_15m_v1).' });
+        return;
+      }
+      if (/[\\/]/.test(raw)) {
+        out({ erreur: 'Pas de chemin : uniquement le nom du fichier.' });
+        return;
+      }
+      const safe = wizardSanitizeFilename(raw);
+      if (!safe || safe === '.json') {
+        out({ erreur: 'Nom trop court ou invalide apres nettoyage.' });
+        return;
+      }
+      wizNewShowStep(2);
+    };
+    document.getElementById('wizNewBack1').onclick = () => wizNewShowStep(1);
+    document.getElementById('wizNewNext2').onclick = () => {
+      const sy = document.getElementById('wizNewSymbols').value.trim();
+      if (!sy) {
+        out({ erreur: 'Au moins un symbole (ex: BTC/USDT).' });
+        return;
+      }
+      wizNewShowStep(3);
+    };
+    document.getElementById('wizNewBack2').onclick = () => wizNewShowStep(2);
+    document.getElementById('wizNewNext3').onclick = () => {
+      const tf = document.getElementById('wizNewTfs').value.trim();
+      if (!tf) {
+        out({ erreur: 'Au moins un timeframe (ex: 5m ou 5m,15m,1h).' });
+        return;
+      }
+      wizNewShowStep(4);
+    };
+    document.getElementById('wizNewBack3').onclick = () => wizNewShowStep(3);
+    document.getElementById('wizNewNext4').onclick = () => {
+      const fn = wizardSanitizeFilename(document.getElementById('wizNewName').value);
+      const sy = document.getElementById('wizNewSymbols').value.trim();
+      const tf = document.getElementById('wizNewTfs').value.trim();
+      const pr = wizSelectedProfile();
+      const obj = wizardBuildMethodObject(fn.replace(/\.json$/i, ''), sy, tf, pr);
+      const pre = document.getElementById('wizNewSummary');
+      if (pre) pre.textContent = jsonStringifyWithLocalTimes(obj);
+      wizNewShowStep(5);
+    };
+    document.getElementById('wizNewBack4').onclick = () => wizNewShowStep(4);
+    document.getElementById('wizNewSave').onclick = async () => {
+      const fn = wizardSanitizeFilename(document.getElementById('wizNewName').value);
+      if (!fn) {
+        out({ erreur: 'Nom de fichier invalide.' });
+        return;
+      }
+      const sy = document.getElementById('wizNewSymbols').value.trim();
+      const tf = document.getElementById('wizNewTfs').value.trim();
+      const pr = wizSelectedProfile();
+      const obj = wizardBuildMethodObject(fn.replace(/\.json$/i, ''), sy, tf, pr);
+      applyMethodFileToForm(obj);
+      methodSyncEditorFromForm();
+      document.getElementById('methodSaveFilename').value = fn;
+      const ok = await methodSavePayloadToName(fn);
+      if (ok) {
+        wizResetToMode();
+        out({ message: 'Methode creee et selectionnee pour le workspace', fichier: fn });
+      }
+    };
+    document.getElementById('wizEditBack').onclick = () => wizResetToMode();
+    document.getElementById('wizEditLoad').onclick = () => {
+      const v = document.getElementById('wizardMethodExistingSelect').value;
+      if (!v) {
+        out({ erreur: 'Choisis un fichier.' });
+        return;
+      }
+      document.getElementById('workspaceMethodSelect').value = v;
+      methodLoadSelected().catch((e) => out(String(e)));
+    };
+    document.getElementById('wizEditSave').onclick = () => {
+      const v = document.getElementById('wizardMethodExistingSelect').value;
+      if (!v) {
+        out({ erreur: 'Choisis un fichier.' });
+        return;
+      }
+      document.getElementById('workspaceMethodSelect').value = v;
+      methodSaveCurrentFile().catch((e) => out(String(e)));
+    };
+    document.getElementById('wizEditOpenAdvanced').onclick = () => {
+      const d = document.getElementById('methodAdvancedBlock');
+      if (d) {
+        d.open = true;
+        d.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+      const tabBtn = document.querySelector('.tab[data-tab="tab-methods"]');
+      if (tabBtn) tabBtn.click();
+    };
+
+    document.getElementById('btnFetchDatasetWorkspace').onclick = () =>
+      runFetchDatasetWorkspace().catch((e) => out(String(e)));
+    document.getElementById('btnMethodNew').onclick = methodNewEmpty;
+    document.getElementById('btnMethodLoad').onclick = () => methodLoadSelected().catch((e) => out(String(e)));
+    document.getElementById('btnMethodSave').onclick = () => methodSaveCurrentFile().catch((e) => out(String(e)));
+    document.getElementById('btnMethodSaveAs').onclick = () => methodSaveAsNew().catch((e) => out(String(e)));
+    document.getElementById('btnMethodFormToJson').onclick = () => {
+      methodSyncEditorFromForm();
+      out({ message: 'JSON mis à jour depuis le formulaire.' });
+    };
+    document.getElementById('btnMethodJsonToForm').onclick = () => methodJsonToForm();
+    document.getElementById('btnMethodFormatJson').onclick = () => methodFormatJson();
+    async function togglePaperLiveRun(){
+      const st = await refreshPaperLiveStatusPre();
+      const running = !!(st && st.paper_live_running);
+      if (running) {
+        const res = await fetch('/api/v1/control/paper-live/stop', { method: 'POST' });
+        out(await res.json());
+        await loadState();
+        return;
+      }
+      syncPaperLiveFromDatasetIfEmpty();
+      if (!(await persistPaperLiveSettings())) return;
+      const res = await fetch('/api/v1/control/paper-live/start', { method: 'POST' });
+      out(await res.json());
+      await loadState();
+    }
+    document.getElementById('btnPaperLiveToggle').onclick = () => togglePaperLiveRun().catch((e) => out(String(e)));
+    document.getElementById('btnPaperLiveFillFromDataset').onclick = () => syncPaperLiveFromDataset();
+    document.getElementById('workspaceDatasetSelect').addEventListener('change', () =>
+      persistWorkspaceSelection().catch((e) => out(String(e))));
+    document.getElementById('workspaceMethodSelect').addEventListener('change', () =>
+      persistWorkspaceSelection().catch((e) => out(String(e))));
+    document.getElementById('periodMaxBars').addEventListener('change', () => refreshAnalysisWindowPreview().catch(() => {}));
+    document.getElementById('backtestLimit').addEventListener('change', () => refreshAnalysisWindowPreview().catch(() => {}));
+    document.getElementById('optimizeLimit').addEventListener('change', () => refreshAnalysisWindowPreview().catch(() => {}));
+    document.getElementById('actionTf').addEventListener('change', () => {
+      updateDatasetBarsPreview();
+      refreshAnalysisWindowPreview().catch(() => {});
+      updateWorkspaceActiveLine();
+    });
+    document.getElementById('actionSymbol').addEventListener('change', () => updateWorkspaceActiveLine());
+    document.getElementById('actionSymbol').addEventListener('input', () => updateWorkspaceActiveLine());
+    document.getElementById('datasetCalendarDays').addEventListener('input', updateDatasetBarsPreview);
+    document.getElementById('datasetCalendarDays').addEventListener('change', updateDatasetBarsPreview);
+    const _tc = document.getElementById('datasetTargetCandles');
+    if (_tc) {
+      _tc.addEventListener('input', updateDatasetBarsPreview);
+      _tc.addEventListener('change', updateDatasetBarsPreview);
+    }
+    syncOhlcvFetchHint();
+    updateDatasetBarsPreview();
+    applyMethodFileToForm(JSON.parse(JSON.stringify(DEFAULT_METHOD_TEMPLATE)));
+    initOptBatchTextarea();
+    loadState().catch(err => out(String(err)));
+  </script>
+</body>
+</html>

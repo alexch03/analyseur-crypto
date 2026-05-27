@@ -1,0 +1,16 @@
+{
+  "comment_fr": "Clés fusionnées au run : symbols, timeframes, scan_limit (scan + paper live), best_engine_params, optimization_*, frais, replay_*, filtres. Les résultats stockent method_file + method_sha256 pour la trace.",
+  "symbols": ["BTC/USDT"],
+  "timeframes": ["1h"],
+  "scan_limit": 600,
+  "best_engine_params": {
+    "rr_min": 2.0,
+    "fvg_proximity_pct": 0.005,
+    "ob_proximity_pct": 0.005,
+    "max_setups": 5,
+    "swing_left": 3,
+    "swing_right": 3
+  },
+  "require_ifvg_confluence": false,
+  "require_rsi_divergence": false
+}

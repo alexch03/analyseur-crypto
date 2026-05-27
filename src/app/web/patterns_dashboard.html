@@ -1,0 +1,469 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Analyseur — Patterns chartistes</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --panel: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --green: #3fb950;
+    --red: #f85149;
+    --amber: #d29922;
+    --purple: #bc8cff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0; font: 13px/1.45 -apple-system, Segoe UI, Roboto, sans-serif;
+    background: var(--bg); color: var(--text);
+  }
+  header { padding: 12px 20px; border-bottom: 1px solid var(--border); display: flex; gap: 16px; align-items: center; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header .muted { color: var(--muted); font-size: 12px; }
+  .container { padding: 20px; max-width: 1400px; margin: 0 auto; }
+  .grid { display: grid; gap: 12px; }
+  .cards { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-bottom: 20px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 14px;
+  }
+  .card .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .card .value { font-size: 22px; font-weight: 600; margin-top: 4px; }
+  .card .value.pos { color: var(--green); }
+  .card .value.neg { color: var(--red); }
+  table {
+    width: 100%; border-collapse: collapse; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+  }
+  th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { background: #1c2128; color: var(--muted); font-size: 11px; text-transform: uppercase; font-weight: 600; }
+  tr:last-child td { border-bottom: none; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+  .badge.FORMING { background: rgba(139,148,158,0.2); color: var(--muted); }
+  .badge.ARMED { background: rgba(210,153,34,0.2); color: var(--amber); }
+  .badge.TRIGGERED { background: rgba(88,166,255,0.2); color: var(--accent); }
+  .badge.TARGET_HIT { background: rgba(63,185,80,0.2); color: var(--green); }
+  .badge.STOPPED { background: rgba(248,81,73,0.2); color: var(--red); }
+  .badge.INVALIDATED { background: rgba(188,140,255,0.15); color: var(--purple); }
+  .badge.EXPIRED { background: rgba(139,148,158,0.15); color: var(--muted); }
+  .badge.LONG { background: rgba(63,185,80,0.18); color: var(--green); }
+  .badge.SHORT { background: rgba(248,81,73,0.18); color: var(--red); }
+  .filters { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+  select, input {
+    background: var(--panel); border: 1px solid var(--border); color: var(--text);
+    padding: 6px 10px; border-radius: 6px; font: inherit;
+  }
+  .num { font-variant-numeric: tabular-nums; }
+  .empty { padding: 30px; text-align: center; color: var(--muted); }
+  h2 { font-size: 14px; margin: 20px 0 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .tag { display: inline-block; padding: 1px 6px; font-size: 10px; background: #1c2128; border: 1px solid var(--border); border-radius: 4px; margin-right: 4px; color: var(--muted); }
+  .refresh-info { font-size: 11px; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Analyseur — Patterns chartistes</h1>
+  <span class="muted">Scanner continu 50 cryptos × 15m / 1h / 4h</span>
+  <span class="refresh-info" id="lastUpdate"></span>
+  <span style="flex:1"></span>
+  <button onclick="scanNow()" id="btnScanNow" title="Lance immédiatement une passe sur tous les symbols">▶ Scan immédiat</button>
+  <button onclick="openBackfill()" id="btnBackfill" title="Rejoue l'historique pour reconstruire les trades clôturés">↶ Backfill historique</button>
+  <button onclick="optimizeFilters()" id="btnOptimize" title="Grid search : trouve la meilleure combinaison de filtres">⚙ Optimize</button>
+  <button onclick="cleanDb()" id="btnClean" style="background:#3a1a1a; color:#f85149; border-color:#5a2a2a;" title="Vide toutes les hypothèses et trades (conserve l'OHLCV)">🗑 Reset DB</button>
+</header>
+
+<div id="jobBanner" style="display:none; padding:8px 20px; background:#1c2128; border-bottom:1px solid var(--border); font-size:12px;"></div>
+
+<dialog id="backfillDialog" style="background:var(--panel); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:20px; min-width:380px;">
+  <h3 style="margin-top:0">Backfill historique</h3>
+  <p style="color:var(--muted); font-size:12px;">Rejoue les dernières bougies bar-par-bar pour reconstruire les trades clôturés et le cumul %.</p>
+  <div style="display:grid; gap:10px;">
+    <label>Symbols (vide = tous) <input id="bfSymbols" placeholder="BTC/USDT,ETH/USDT" style="width:100%"></label>
+    <label>Timeframes (vide = tous) <input id="bfTimeframes" placeholder="1h,4h" style="width:100%"></label>
+    <label>Nombre de bougies <input id="bfBars" type="number" value="250" min="60" max="1000" style="width:100%"></label>
+    <label>Saut entre bougies <input id="bfStep" type="number" value="1" min="1" max="5" style="width:100%"><small style="color:var(--muted)">1 = précis, 3-5 = ~5× plus rapide</small></label>
+  </div>
+  <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:16px;">
+    <button onclick="document.getElementById('backfillDialog').close()">Annuler</button>
+    <button onclick="launchBackfill()">Lancer</button>
+  </div>
+</dialog>
+
+<div class="container">
+
+  <h2>Performance paper trading (1 unité par trade)</h2>
+  <div class="grid cards" id="statsGrid">
+    <div class="card"><div class="label">Loading...</div></div>
+  </div>
+
+  <h2>Hypothèses</h2>
+  <div class="filters">
+    <select id="filterState">
+      <option value="">Tous états</option>
+      <option value="FORMING">FORMING</option>
+      <option value="ARMED">ARMED</option>
+      <option value="TRIGGERED">TRIGGERED</option>
+      <option value="TARGET_HIT">TARGET_HIT</option>
+      <option value="STOPPED">STOPPED</option>
+      <option value="INVALIDATED">INVALIDATED</option>
+      <option value="EXPIRED">EXPIRED</option>
+    </select>
+    <select id="filterPattern">
+      <option value="">Tous patterns</option>
+      <option value="TRIANGLE_ASC">Triangle ASC</option>
+      <option value="TRIANGLE_DESC">Triangle DESC</option>
+      <option value="TRIANGLE_SYM">Triangle SYM</option>
+      <option value="RECTANGLE">Rectangle</option>
+      <option value="CHANNEL_UP">Channel UP</option>
+      <option value="CHANNEL_DOWN">Channel DOWN</option>
+      <option value="WEDGE_RISING">Wedge Rising</option>
+      <option value="WEDGE_FALLING">Wedge Falling</option>
+      <option value="FLAG_BULL">Flag Bull</option>
+      <option value="FLAG_BEAR">Flag Bear</option>
+      <option value="DOUBLE_TOP">Double Top</option>
+      <option value="DOUBLE_BOTTOM">Double Bottom</option>
+      <option value="HEAD_SHOULDERS">H&amp;S</option>
+      <option value="INVERSE_HEAD_SHOULDERS">Inverse H&amp;S</option>
+    </select>
+    <input id="filterSymbol" placeholder="Symbol (ex: BTC/USDT)" />
+    <button onclick="loadAll()">↻ Refresh</button>
+  </div>
+  <div id="hypothesesTable"></div>
+
+  <h2>Analytics — qu'est-ce qui marche ? <button onclick="loadAnalytics()" style="margin-left:8px">↻</button></h2>
+  <p style="color:var(--muted); font-size:12px; margin:0 0 10px;">
+    Trié par expectancy décroissante. Les segments en tête sont ceux à garder, ceux en queue à filtrer
+    (utilise les variables d'env <code>MIN_CONFLUENCE_SCORE</code>, <code>REJECT_TREND_COUNTER</code>, etc.).
+  </p>
+  <div id="analyticsGrid" style="display:grid; gap:20px; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));"></div>
+
+  <h2>Derniers trades clôturés</h2>
+  <div id="tradesTable"></div>
+
+</div>
+
+<script>
+const fmt = (n, d=2) => (n == null ? '—' : Number(n).toFixed(d));
+const fmtPct = (n, d=2) => (n == null ? '—' : (n >= 0 ? '+' : '') + Number(n).toFixed(d) + '%');
+const cls = (n) => (n == null ? '' : (n > 0 ? 'pos' : (n < 0 ? 'neg' : '')));
+
+function badge(value, cls) {
+  return `<span class="badge ${cls}">${value}</span>`;
+}
+
+async function loadStats() {
+  try {
+    const r = await fetch('/api/v1/unit_paper/stats');
+    const s = await r.json();
+    document.getElementById('statsGrid').innerHTML = `
+      <div class="card"><div class="label">Trades clôturés</div><div class="value num">${s.closed_trades}</div></div>
+      <div class="card"><div class="label">Win rate</div><div class="value num">${fmt(s.win_rate_pct, 1)}%</div></div>
+      <div class="card"><div class="label">Cumul (simple)</div><div class="value num ${cls(s.cumulative_simple_pct)}">${fmtPct(s.cumulative_simple_pct)}</div></div>
+      <div class="card"><div class="label">Cumul (compound)</div><div class="value num ${cls(s.cumulative_compound_pct)}">${fmtPct(s.cumulative_compound_pct)}</div></div>
+      <div class="card"><div class="label">Trades ouverts</div><div class="value num">${s.open_trades}</div></div>
+      <div class="card"><div class="label">Meilleur</div><div class="value num pos">${fmtPct(s.best_pct)}</div></div>
+      <div class="card"><div class="label">Pire</div><div class="value num neg">${fmtPct(s.worst_pct)}</div></div>
+      <div class="card"><div class="label">Espérance / trade</div><div class="value num ${cls(s.expectancy_pct)}">${fmtPct(s.expectancy_pct)}</div></div>
+    `;
+  } catch (e) {
+    document.getElementById('statsGrid').innerHTML = `<div class="card"><div class="label">Stats indisponibles</div><div class="value">—</div></div>`;
+  }
+}
+
+async function loadHypotheses() {
+  const params = new URLSearchParams();
+  const s = document.getElementById('filterState').value;
+  const p = document.getElementById('filterPattern').value;
+  const sym = document.getElementById('filterSymbol').value.trim();
+  if (s) params.set('state', s);
+  if (p) params.set('pattern_kind', p);
+  if (sym) params.set('symbol', sym);
+  params.set('limit', '100');
+
+  try {
+    const r = await fetch('/api/v1/hypotheses?' + params.toString());
+    const data = await r.json();
+    if (!data.length) {
+      document.getElementById('hypothesesTable').innerHTML = '<div class="empty">Aucune hypothèse</div>';
+      return;
+    }
+    const rows = data.map(h => `
+      <tr>
+        <td>${badge(h.state, h.state)}</td>
+        <td><strong>${h.symbol}</strong> <span class="tag">${h.timeframe}</span></td>
+        <td>${h.pattern_kind}</td>
+        <td>${badge(h.side, h.side)}</td>
+        <td class="num">${fmt(h.entry_price, 4)}</td>
+        <td class="num">${fmt(h.target_price, 4)}</td>
+        <td class="num">${fmt(h.invalidation_price, 4)}</td>
+        <td class="num">${fmt(h.confluence_score, 2)}</td>
+        <td>${(h.confluence_tags || []).map(t => `<span class="tag">${t}</span>`).join(' ')}</td>
+        <td class="num">${h.updated_at ? new Date(h.updated_at).toLocaleString('fr-FR', {dateStyle:'short', timeStyle:'short'}) : '—'}</td>
+      </tr>
+    `).join('');
+    document.getElementById('hypothesesTable').innerHTML = `
+      <table>
+        <thead><tr>
+          <th>État</th><th>Paire</th><th>Pattern</th><th>Sens</th>
+          <th>Entry</th><th>Target</th><th>Invalidation</th>
+          <th>Conf.</th><th>Tags</th><th>MAJ</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+  } catch (e) {
+    document.getElementById('hypothesesTable').innerHTML = '<div class="empty">Erreur de chargement</div>';
+  }
+}
+
+async function loadTrades() {
+  try {
+    const r = await fetch('/api/v1/unit_paper/trades?limit=20');
+    const data = await r.json();
+    const closed = data.filter(t => t.exit_price != null);
+    if (!closed.length) {
+      document.getElementById('tradesTable').innerHTML = '<div class="empty">Aucun trade clôturé</div>';
+      return;
+    }
+    const rows = closed.map(t => `
+      <tr>
+        <td>${badge(t.outcome || '—', t.outcome || 'EXPIRED')}</td>
+        <td><strong>${t.symbol}</strong> <span class="tag">${t.timeframe}</span></td>
+        <td>${t.pattern_kind}</td>
+        <td>${badge(t.side, t.side)}</td>
+        <td class="num">${fmt(t.entry_price, 4)}</td>
+        <td class="num">${fmt(t.exit_price, 4)}</td>
+        <td class="num ${cls(t.pct_gain)}"><strong>${fmtPct(t.pct_gain)}</strong></td>
+        <td class="num">${t.exit_timestamp ? new Date(t.exit_timestamp).toLocaleString('fr-FR', {dateStyle:'short', timeStyle:'short'}) : '—'}</td>
+      </tr>
+    `).join('');
+    document.getElementById('tradesTable').innerHTML = `
+      <table>
+        <thead><tr>
+          <th>Outcome</th><th>Paire</th><th>Pattern</th><th>Sens</th>
+          <th>Entry</th><th>Exit</th><th>Gain</th><th>Clôturé</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+  } catch (e) {
+    document.getElementById('tradesTable').innerHTML = '<div class="empty">Erreur de chargement</div>';
+  }
+}
+
+async function cleanDb() {
+  if (!confirm('Vider toutes les hypothèses et trades ? (l\'OHLCV historique est conservé)')) return;
+  try {
+    const r = await fetch('/api/v1/admin/clean-db?confirm=yes', { method: 'POST' });
+    const j = await r.json();
+    showBanner(`✅ DB nettoyée : ${j.deleted_unit_trades} trades, ${j.deleted_hypotheses} hypotheses, ${j.deleted_scan_runs} scan_runs`, 'var(--green)');
+    setTimeout(hideBanner, 6000);
+    loadAll();
+  } catch (e) {
+    showBanner('❌ Échec clean DB : ' + e, 'var(--red)');
+  }
+}
+
+let _optimizeOpen = false;
+async function optimizeFilters() {
+  try {
+    showBanner('⏳ Grid search en cours...', 'var(--accent)');
+    const r = await fetch('/api/v1/analytics/optimize?top_n=15');
+    const data = await r.json();
+    hideBanner();
+    if (!data.top_configs || !data.top_configs.length) {
+      alert(`Pas assez de trades pour optimiser (${data.trades_available || 0} disponibles, min 20 par config).`);
+      return;
+    }
+    const b = data.baseline;
+    const rows = data.top_configs.map((c, i) => `
+      <tr>
+        <td>#${i+1}</td>
+        <td class="num">${c.count}</td>
+        <td class="num">${c.win_rate_pct.toFixed(1)}%</td>
+        <td class="num ${c.expectancy_pct > 0 ? 'pos':'neg'}"><strong>${fmtPct(c.expectancy_pct)}</strong></td>
+        <td class="num ${c.cumul_compound_pct > 0 ? 'pos':'neg'}"><strong>${fmtPct(c.cumul_compound_pct)}</strong></td>
+        <td style="font-size:11px; font-family:monospace;">
+          MIN_CONFLUENCE_SCORE=${c.config.min_confluence_score}<br>
+          ${c.config.reject_tags.length ? 'REJECT='+c.config.reject_tags.join(',')+'<br>' : ''}
+          ${c.config.required_tags.length ? 'REQUIRE='+c.config.required_tags.join(',') : ''}
+        </td>
+      </tr>
+    `).join('');
+    const html = `
+      <h3 style="margin-top:0">Top 15 configurations (sur ${data.trades_available} trades)</h3>
+      <p style="color:var(--muted); font-size:12px;">
+        Baseline (sans filtre): winrate ${b.win_rate_pct}%, expectancy <span class="${b.expectancy_pct > 0 ? 'pos':'neg'}">${fmtPct(b.expectancy_pct)}</span>, cumul compound <span class="${b.cumul_compound_pct > 0 ? 'pos':'neg'}">${fmtPct(b.cumul_compound_pct)}</span>
+      </p>
+      <table>
+        <thead><tr><th>Rang</th><th>N trades</th><th>Win%</th><th>Exp/trade</th><th>Cumul (comp)</th><th>Variables .env à mettre</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <p style="color:var(--muted); font-size:11px; margin-top:12px;">
+        💡 Copie les variables de la ligne #1 dans ton .env, ajoute <code>BREAKEVEN_TRIGGER_PCT=0.5</code> (non simulable virtuellement),
+        relance avec start.bat, puis re-fais un backfill pour valider.
+      </p>
+    `;
+    let dlg = document.getElementById('optimizeDialog');
+    if (!dlg) {
+      dlg = document.createElement('dialog');
+      dlg.id = 'optimizeDialog';
+      dlg.style.cssText = 'background:var(--panel); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:20px; max-width:900px; width:90%; max-height:80vh; overflow:auto;';
+      document.body.appendChild(dlg);
+    }
+    dlg.innerHTML = html + '<div style="text-align:right; margin-top:10px;"><button onclick="document.getElementById(\'optimizeDialog\').close()">Fermer</button></div>';
+    dlg.showModal();
+  } catch (e) {
+    showBanner('❌ Erreur optimize : ' + e, 'var(--red)');
+  }
+}
+
+async function loadAnalytics() {
+  try {
+    const r = await fetch('/api/v1/analytics/breakdown');
+    const data = await r.json();
+    const sections = [
+      ['by_pattern', 'Par pattern'],
+      ['by_tag', 'Par tag de confluence'],
+      ['by_score_bucket', 'Par bucket de score'],
+      ['by_side', 'Par sens (LONG/SHORT)'],
+      ['by_timeframe', 'Par timeframe'],
+      ['by_symbol_top20', 'Top 20 symbols (par expectancy)'],
+      ['by_pattern_x_tag', 'Top 30 pattern × tag'],
+    ];
+    document.getElementById('analyticsGrid').innerHTML = sections.map(([key, title]) => {
+      const rows = (data[key] || []).map(s => {
+        const expClass = s.expectancy_pct > 0 ? 'pos' : (s.expectancy_pct < 0 ? 'neg' : '');
+        const cumClass = s.cumul_compound_pct > 0 ? 'pos' : (s.cumul_compound_pct < 0 ? 'neg' : '');
+        return `<tr>
+          <td title="${s.label}">${s.label.length > 35 ? s.label.slice(0,32)+'…' : s.label}</td>
+          <td class="num">${s.count}</td>
+          <td class="num">${s.win_rate_pct.toFixed(1)}%</td>
+          <td class="num ${expClass}"><strong>${fmtPct(s.expectancy_pct)}</strong></td>
+          <td class="num ${cumClass}">${fmtPct(s.cumul_compound_pct)}</td>
+        </tr>`;
+      }).join('');
+      return `
+        <div>
+          <h3 style="font-size:12px; color:var(--muted); text-transform:uppercase; margin:0 0 6px;">${title}</h3>
+          <table>
+            <thead><tr><th>Segment</th><th>N</th><th>Win%</th><th>Exp/trade</th><th>Cumul (comp)</th></tr></thead>
+            <tbody>${rows || '<tr><td colspan=5 class="empty">aucune donnée</td></tr>'}</tbody>
+          </table>
+        </div>
+      `;
+    }).join('');
+  } catch (e) {
+    document.getElementById('analyticsGrid').innerHTML = '<div class="empty">Erreur analytics</div>';
+  }
+}
+
+async function loadAll() {
+  await Promise.all([loadStats(), loadHypotheses(), loadTrades(), loadAnalytics()]);
+  document.getElementById('lastUpdate').textContent = 'MAJ : ' + new Date().toLocaleTimeString('fr-FR');
+}
+
+let _activeJobId = null;
+let _jobPollTimer = null;
+
+function showBanner(text, color) {
+  const b = document.getElementById('jobBanner');
+  b.style.display = 'block';
+  b.style.color = color || 'var(--accent)';
+  b.textContent = text;
+}
+function hideBanner() {
+  document.getElementById('jobBanner').style.display = 'none';
+}
+
+async function pollJob() {
+  if (!_activeJobId) return;
+  try {
+    const r = await fetch('/api/v1/scanner/jobs/' + _activeJobId);
+    const j = await r.json();
+    if (j.in_progress) {
+      const elapsed = Math.round((Date.now() - new Date(j.started_at).getTime()) / 1000);
+      showBanner(`⏳ ${j.kind} en cours… (${elapsed}s)`, 'var(--accent)');
+    } else {
+      clearInterval(_jobPollTimer);
+      _jobPollTimer = null;
+      _activeJobId = null;
+      if (j.error) {
+        showBanner(`❌ Job échoué : ${j.error}`, 'var(--red)');
+        setTimeout(hideBanner, 10000);
+      } else {
+        const r = j.result || {};
+        showBanner(`✅ ${j.kind} terminé en ${r.elapsed_seconds}s — ${r.total_patterns_detected ?? r.pairs_processed ?? 0} resultats`, 'var(--green)');
+        setTimeout(hideBanner, 8000);
+        loadAll();
+      }
+      document.getElementById('btnScanNow').disabled = false;
+      document.getElementById('btnBackfill').disabled = false;
+    }
+  } catch (e) { /* silent */ }
+}
+
+async function scanNow() {
+  if (_activeJobId) { alert('Un job est déjà en cours.'); return; }
+  document.getElementById('btnScanNow').disabled = true;
+  document.getElementById('btnBackfill').disabled = true;
+  try {
+    const r = await fetch('/api/v1/scanner/scan-now', { method: 'POST' });
+    const j = await r.json();
+    _activeJobId = j.job_id;
+    showBanner(`⏳ Scan immédiat lancé (${j.job_id})…`, 'var(--accent)');
+    _jobPollTimer = setInterval(pollJob, 2000);
+  } catch (e) {
+    showBanner('❌ Échec du lancement : ' + e, 'var(--red)');
+    document.getElementById('btnScanNow').disabled = false;
+    document.getElementById('btnBackfill').disabled = false;
+  }
+}
+
+function openBackfill() {
+  document.getElementById('backfillDialog').showModal();
+}
+
+async function launchBackfill() {
+  const params = new URLSearchParams();
+  const sym = document.getElementById('bfSymbols').value.trim();
+  const tf = document.getElementById('bfTimeframes').value.trim();
+  const bars = document.getElementById('bfBars').value;
+  const step = document.getElementById('bfStep').value;
+  if (sym) params.set('symbols', sym);
+  if (tf) params.set('timeframes', tf);
+  if (bars) params.set('history_bars', bars);
+  if (step) params.set('bars_per_step', step);
+  document.getElementById('backfillDialog').close();
+  document.getElementById('btnScanNow').disabled = true;
+  document.getElementById('btnBackfill').disabled = true;
+  try {
+    const r = await fetch('/api/v1/scanner/backfill?' + params.toString(), { method: 'POST' });
+    const j = await r.json();
+    _activeJobId = j.job_id;
+    showBanner(`⏳ Backfill lancé (peut durer plusieurs minutes selon la taille)…`, 'var(--accent)');
+    _jobPollTimer = setInterval(pollJob, 3000);
+  } catch (e) {
+    showBanner('❌ Échec du lancement : ' + e, 'var(--red)');
+    document.getElementById('btnScanNow').disabled = false;
+    document.getElementById('btnBackfill').disabled = false;
+  }
+}
+
+document.getElementById('filterState').addEventListener('change', loadHypotheses);
+document.getElementById('filterPattern').addEventListener('change', loadHypotheses);
+document.getElementById('filterSymbol').addEventListener('input', () => {
+  clearTimeout(window._symT);
+  window._symT = setTimeout(loadHypotheses, 350);
+});
+
+loadAll();
+setInterval(loadAll, 30_000);
+</script>
+</body>
+</html>

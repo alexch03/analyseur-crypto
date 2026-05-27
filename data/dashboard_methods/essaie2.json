@@ -1,0 +1,86 @@
+{
+  "comment_fr": "Methode \"essaie2\" — creee avec l'assistant (aggressive).",
+  "symbols": [
+    "ETH/USDT"
+  ],
+  "timeframes": [
+    "5m"
+  ],
+  "scan_limit": 600,
+  "best_engine_params": {
+    "rr_min": 1.5,
+    "fvg_proximity_pct": 0.003,
+    "ob_proximity_pct": 0.008,
+    "max_setups": 3,
+    "swing_left": 2,
+    "swing_right": 2
+  },
+  "unit_size": 1,
+  "entry_fee_rate": 0.0004,
+  "exit_fee_rate": 0.0004,
+  "funding_rate_8h": 0,
+  "auto_fee_from_exchange": false,
+  "auto_funding_from_exchange": false,
+  "fee_market_type": "swap",
+  "require_ifvg_confluence": false,
+  "ifvg_confluence_pct": 0.008,
+  "require_rsi_divergence": false,
+  "training_bars": 120,
+  "max_holding_bars": 120,
+  "auto_parameters": true,
+  "telegram_enabled": false,
+  "analysis_period_preset": "custom",
+  "period_max_bars": 5000,
+  "backtest_limit": 1200,
+  "optimize_limit": 1200,
+  "top_optimization": 5,
+  "wf_splits": 3,
+  "optimization_objective": "net_pnl_quote",
+  "optimization_strategy": "exhaustive",
+  "optimization_max_trials": 200,
+  "optimization_grid": {
+    "rr_min_values": [
+      1.5,
+      2,
+      2.5
+    ],
+    "fvg_proximity_values": [
+      0.003,
+      0.005,
+      0.008
+    ],
+    "ob_proximity_values": [
+      0.003,
+      0.005,
+      0.008
+    ],
+    "swing_left_values": [
+      2,
+      3,
+      4
+    ],
+    "swing_right_values": [
+      2,
+      3,
+      4
+    ],
+    "max_setups_values": [
+      3,
+      5
+    ]
+  },
+  "optimization_last_applied_utc": "2026-04-12T20:49:34.680699+00:00",
+  "optimization_last_run": {
+    "objective": "net_pnl_quote",
+    "symbol": "ETH/USDT",
+    "timeframe": "5m",
+    "params": {
+      "rr_min": 1.5,
+      "fvg_proximity_pct": 0.003,
+      "ob_proximity_pct": 0.008,
+      "max_setups": 3,
+      "swing_left": 2,
+      "swing_right": 2
+    }
+  }
+}
