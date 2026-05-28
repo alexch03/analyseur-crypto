@@ -59,6 +59,10 @@ _DEFAULT_BREAKEVEN_TRIGGER_PCT = 0.0    # BE desactive : sur ce dataset il conve
 _DEFAULT_BREAKOUT_BUFFER_PCT = 0.0
 _DEFAULT_TRAILING_ATR_MULT = 0.0        # 0 = pas de trailing ; ex 2.0 = SL trail a bar_low - 2*ATR (LONG)
 _DEFAULT_TRAILING_ACTIVATION_PCT = 0.5  # active le trailing apres 50% du chemin vers target
+# Adaptation au regime de marche : si activee, l'engine filtre/scale les patterns
+# selon affinite avec regime (BULL/BEAR/RANGE). Voir market_regime.PATTERN_REGIME_AFFINITY.
+_DEFAULT_REGIME_ADAPTIVE = True         # active par defaut
+_DEFAULT_REGIME_MIN_SCORE = 0.5         # rejette pattern si score regime < 0.5
 # Body ratio minimum pour confirmer un breakout (filtre les wicks)
 # 0.3 = au moins 30% de la bougie est du body (60% wicks max).
 # 0.0 = desactive (legacy)
@@ -84,6 +88,8 @@ class HypothesisEngine:
         trailing_stop_atr_mult: float = _DEFAULT_TRAILING_ATR_MULT,
         trailing_activation_pct: float = _DEFAULT_TRAILING_ACTIVATION_PCT,
         min_breakout_body_ratio: float = _DEFAULT_MIN_BREAKOUT_BODY_RATIO,
+        regime_adaptive: bool = _DEFAULT_REGIME_ADAPTIVE,
+        regime_min_score: float = _DEFAULT_REGIME_MIN_SCORE,
     ) -> None:
         self._arm_prox = arm_proximity_pct
         self._expiry_bars = expiry_bars
@@ -99,7 +105,14 @@ class HypothesisEngine:
         self._excluded = tuple(excluded_patterns)
         self._trail_atr_mult = float(trailing_stop_atr_mult)
         self._trail_activate = float(trailing_activation_pct)
+        self._regime_adaptive = bool(regime_adaptive)
+        self._regime_min_score = float(regime_min_score)
+        self._market_regime = None  # MarketRegime | None, mis a jour par set_market_regime()
         self._min_breakout_body = float(min_breakout_body_ratio)
+
+    def set_market_regime(self, regime) -> None:
+        """Hook appele par le scanner avec le regime detecte courant."""
+        self._market_regime = regime
 
     def step(
         self,
@@ -421,6 +434,13 @@ class HypothesisEngine:
             risk = abs(h.entry_price - h.invalidation_price)
             reward = abs(h.target_price - h.entry_price)
             if risk <= 0 or (reward / risk) < self._min_rr:
+                return False
+        # Filtrage adaptatif au regime de marche : rejette les patterns
+        # mal alignes avec le regime courant.
+        if self._regime_adaptive and self._market_regime is not None:
+            from app.services.market_regime import pattern_regime_score
+            score = pattern_regime_score(h.pattern.kind.value, self._market_regime)
+            if score < self._regime_min_score:
                 return False
         return True
 

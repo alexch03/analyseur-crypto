@@ -14,6 +14,7 @@ from app.db.models.candle import (
     Timeframe,
 )
 from app.db.models.hypothesis import Hypothesis, ScanRun, UnitTrade
+from app.db.models.regime import MarketRegimeSnapshot
 
 __all__ = [
     "Base",
@@ -21,6 +22,7 @@ __all__ = [
     "Exchange",
     "FeatureSnapshot",
     "Hypothesis",
+    "MarketRegimeSnapshot",
     "MarketStructureEvent",
     "PaperAccount",
     "PaperOrder",

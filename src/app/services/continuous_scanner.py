@@ -153,8 +153,36 @@ class ContinuousScanner:
         finally:
             await self._fetcher.close()
 
+    async def _detect_market_regime(self) -> None:
+        """Detecte le regime de marche : BTC 1h + breadth des symbols scannes.
+
+        Appele en debut de chaque cycle. Le regime est ensuite utilise par
+        HypothesisEngine pour adapter le filtrage des patterns.
+        """
+        try:
+            from app.services.regime_tracker import get_regime_tracker
+            # Fetch BTC 1h pour analyse trend macro (300 bars = 12.5j)
+            btc_rows = await self._fetcher.fetch_ohlcv("BTC/USDT", "1h", limit=300)
+            if not btc_rows or len(btc_rows) < 50:
+                return
+            df = _rows_to_df(btc_rows)
+            # Breadth : on calcule sur les pairs deja scannees ce cycle
+            # (necessite un cache; pour l'instant fallback None -> derive de BTC seul)
+            tracker = get_regime_tracker()
+            async with async_session_factory() as session:
+                regime = await tracker.refresh(session, df, breadth_pct=None)
+                await session.commit()
+            # Communique au moteur pour adaptation
+            if hasattr(self._engine, "set_market_regime"):
+                self._engine.set_market_regime(regime)
+        except Exception:
+            logger.exception("Regime detection failed (continue scan)")
+
     async def _scan_cycle(self) -> None:
         """Une passe complète sur toutes les paires."""
+        # 0. Detecte le regime au debut du cycle pour adapter l'engine
+        await self._detect_market_regime()
+
         ok = 0
         failed = 0
         import time as _t
