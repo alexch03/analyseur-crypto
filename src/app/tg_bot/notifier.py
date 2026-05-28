@@ -97,6 +97,30 @@ def send_async(text: str, parse_mode: str = "Markdown") -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _exec_mode_tag() -> str:
+    """Retourne un tag clair sur le mode d'execution actuel."""
+    import os
+    mode = os.environ.get("EXECUTION_MODE", "disabled").lower()
+    if mode == "disabled":
+        return "📊 SCAN ONLY"
+    if mode == "paper":
+        return "📝 PAPER"
+    if mode == "demo":
+        return "🟡 DEMO Bitget"
+    if mode == "live":
+        return "🔴 LIVE Bitget"
+    return f"❔ {mode}"
+
+
+def _is_demo_symbol(symbol: str) -> bool:
+    """Verifie si le symbol est dans la whitelist DEMO_SYMBOLS."""
+    import os
+    wl = [s.strip() for s in os.environ.get("DEMO_SYMBOLS", "").split(",") if s.strip()]
+    if not wl:
+        return True  # vide = tous autorises
+    return symbol in wl or symbol.split(":")[0] in wl
+
+
 def dispatch_hypothesis_triggered(
     *,
     symbol: str,
@@ -108,15 +132,23 @@ def dispatch_hypothesis_triggered(
     invalidation: float,
     confluence_score: float,
 ) -> None:
-    """Notif Telegram quand une hypothese passe a TRIGGERED."""
+    """Notif Telegram quand une hypothese passe a TRIGGERED (vrai trade ou paper)."""
     from app.tg_bot import config as cfg
     if not cfg.NOTIFY_ON_TRIGGER or not cfg.is_ready():
         return
     rr = abs(target - entry) / max(1e-9, abs(invalidation - entry))
     emoji = "🟢" if side == "LONG" else "🔴"
+    mode = _exec_mode_tag()
+    # Indique si ce symbole va passer un vrai ordre exchange
+    import os
+    will_exec = (
+        os.environ.get("EXECUTION_MODE", "disabled").lower() in ("demo", "live")
+        and _is_demo_symbol(symbol)
+    )
+    exec_tag = "  🎯 *EXCHANGE ORDER*" if will_exec else "  (paper only)"
     text = (
-        f"{emoji} *TRIGGERED* — `{pattern}`\n\n"
-        f"`{symbol}` {timeframe}  *{side}*\n"
+        f"{emoji} *TRIGGERED* — `{pattern}`  {mode}\n\n"
+        f"`{symbol}` {timeframe}  *{side}*{exec_tag}\n"
         f"  Entry: `${entry:,.4f}`\n"
         f"  Target: `${target:,.4f}`\n"
         f"  SL: `${invalidation:,.4f}`\n"
@@ -136,24 +168,28 @@ def dispatch_hypothesis_closed(
     exit_price: float,
     pct_gain: float,
 ) -> None:
-    """Notif Telegram quand une hypothese se ferme (TARGET_HIT, STOPPED, etc)."""
+    """Notif Telegram quand un VRAI trade se ferme (TARGET_HIT ou STOPPED).
+
+    Note : pas appelee pour INVALIDATED/EXPIRED (= pattern casse avant trigger,
+    pas de trade reel).
+    """
     from app.tg_bot import config as cfg
     if not cfg.NOTIFY_ON_CLOSE or not cfg.is_ready():
         return
 
     if outcome == "TARGET_HIT":
         emoji = "✅"
+        title = "WIN"
     elif outcome == "STOPPED":
         emoji = "❌"
-    elif outcome == "INVALIDATED":
-        emoji = "⏸"
-    elif outcome == "EXPIRED":
-        emoji = "⏱"
+        title = "LOSS"
     else:
         emoji = "❔"
+        title = outcome
 
+    mode = _exec_mode_tag()
     text = (
-        f"{emoji} *CLOSED {outcome}* — `{pattern}`\n\n"
+        f"{emoji} *{title}* — `{pattern}`  {mode}\n\n"
         f"`{symbol}` {timeframe}  {side}\n"
         f"  Entry: `${entry:,.4f}` -> Exit: `${exit_price:,.4f}`\n"
         f"  PnL: `{pct_gain:+.2f}%`"

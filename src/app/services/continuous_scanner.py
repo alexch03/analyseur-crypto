@@ -434,8 +434,10 @@ class ContinuousScanner:
                         except Exception as exc:
                             logger.exception("Executor open failed for %s", h.id)
 
-                # Close transition (TARGET_HIT / STOPPED / INVALIDATED / EXPIRED)
-                elif (last_t.to_state.value in ("TARGET_HIT", "STOPPED", "INVALIDATED", "EXPIRED")
+                # Close transition - SEULEMENT si vraie position (triggered_at != None)
+                # INVALIDATED/EXPIRED = pattern casse AVANT trigger = pas de trade reel
+                elif (last_t.to_state.value in ("TARGET_HIT", "STOPPED")
+                        and h.triggered_at is not None
                         and last_t.timestamp == h.closed_at):
                     exit_p = float(h.outcome_price or 0.0)
                     entry_p = float(h.triggered_price or h.entry_price)
