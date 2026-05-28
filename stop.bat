@@ -1,9 +1,12 @@
 @echo off
 REM ============================================================
 REM Analyseur Crypto - Arret propre
-REM Double-clique pour fermer le scanner + l'API.
+REM Ferme les 3 fenetres (Scanner, API, Telegram).
+REM Ne touche PAS aux autres pythons (autres projets) - filtre
+REM par titre de fenetre.
 REM ============================================================
 
+cd /d "%~dp0"
 title Analyseur - Arret
 
 echo.
@@ -34,15 +37,22 @@ if not errorlevel 1 (
     echo [INFO] API deja arretee.
 )
 
-REM --- Filet de securite : tue tout uvicorn/python orphelin lance depuis ce dossier ---
-REM (commente par defaut pour ne pas tuer d'autres projets Python en cours)
-REM taskkill /F /IM uvicorn.exe >nul 2>&1
+REM --- Telegram bot ---
+tasklist /FI "WINDOWTITLE eq Analyseur - Telegram*" 2>nul | find /I "cmd.exe" >nul
+if not errorlevel 1 (
+    echo [STOP] Fermeture du bot Telegram...
+    taskkill /FI "WINDOWTITLE eq Analyseur - Telegram*" /T /F >nul 2>&1
+    set ANY_KILLED=1
+) else (
+    echo [INFO] Telegram bot deja arrete (ou jamais lance).
+)
 
 echo.
 if "%ANY_KILLED%"=="1" (
     echo  ============================================================
-    echo   Tout est arrete. Les hypotheses sont sauvegardees dans
-    echo   analyseur.db et reprendront au prochain start.bat.
+    echo   Tout est arrete proprement.
+    echo   La DB analyseur.db conserve tes 808+ trades.
+    echo   Au prochain start.bat, le bot reprend ou il s'etait arrete.
     echo  ============================================================
 ) else (
     echo  ============================================================
