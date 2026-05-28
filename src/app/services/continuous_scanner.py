@@ -29,11 +29,14 @@ from app.ingestion.ccxt_fetcher import CCXTFetcher
 from app.market_structure.swings import detect_swings
 from app.patterns._quality import QualityWrappedDetector
 from app.patterns.channels import ChannelDetector
+from app.patterns.expanding_triangles import ExpandingTriangleDetector
 from app.patterns.flags import FlagDetector
 from app.patterns.interfaces import PatternDetector
+from app.patterns.pennants import PennantDetector
 from app.patterns.rectangles import RectangleDetector
 from app.patterns.reversal import ReversalDetector
 from app.patterns.triangles import TriangleDetector
+from app.patterns.triples import TripleDetector
 from app.patterns.wedges import WedgeDetector
 from app.paper.unit_tracker import reconcile_with_engine_step
 from app.services.hypothesis_engine import ConfluenceScorer, HypothesisEngine
@@ -71,6 +74,10 @@ def default_detectors() -> list[PatternDetector]:
         QualityWrappedDetector(WedgeDetector()),
         QualityWrappedDetector(FlagDetector()),
         QualityWrappedDetector(ReversalDetector()),
+        # Nouveaux (mai 2026) : completent les 20 patterns chartistes classiques
+        QualityWrappedDetector(TripleDetector()),
+        QualityWrappedDetector(ExpandingTriangleDetector()),
+        QualityWrappedDetector(PennantDetector()),
     ]
 
 

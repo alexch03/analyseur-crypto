@@ -202,6 +202,14 @@ PATTERN_REGIME_AFFINITY: dict[str, dict[str, float]] = {
     "TRIANGLE_DESC":          {"BULL": 0.7, "BEAR": 1.2, "RANGE": 1.0},
     "TRIANGLE_SYM":           {"BULL": 1.0, "BEAR": 1.0, "RANGE": 1.1},
     "RECTANGLE":              {"BULL": 0.9, "BEAR": 0.9, "RANGE": 1.3},  # consolidation
+    # Nouveaux patterns (mai 2026)
+    "TRIPLE_TOP":             {"BULL": 0.4, "BEAR": 1.3, "RANGE": 0.9},  # 3 sommets = bearish reversal
+    "TRIPLE_BOTTOM":          {"BULL": 1.3, "BEAR": 0.4, "RANGE": 0.9},
+    "EXPANDING_TRIANGLE_BEARISH": {"BULL": 0.5, "BEAR": 1.2, "RANGE": 1.0},
+    "EXPANDING_TRIANGLE_BULLISH": {"BULL": 1.2, "BEAR": 0.5, "RANGE": 1.0},
+    "EXPANDING_TRIANGLE_SYM": {"BULL": 1.0, "BEAR": 1.0, "RANGE": 1.1},   # megaphone = forte vol incertaine
+    "PENNANT_BULL":           {"BULL": 1.3, "BEAR": 0.5, "RANGE": 0.8},   # continuation bullish
+    "PENNANT_BEAR":           {"BULL": 0.5, "BEAR": 1.3, "RANGE": 0.8},
 }
 
 
