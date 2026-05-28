@@ -98,6 +98,11 @@ echo       python scripts\analyze_trades.py
 echo     Tests de sante :
 echo       python scripts\test_suite.py --no-network
 echo.
+echo   Bot Telegram (mobile) :
+echo     1. Configure TELEGRAM_BOT_TOKEN + TELEGRAM_ADMIN_CHAT_ID dans .env
+echo     2. Double-clic start_telegram.bat
+echo     Le bot expose : /perf /open /trades /scan /backfill /patterns
+echo.
 echo   Pour arreter : ferme les deux fenetres.
 echo  ============================================================
 echo.

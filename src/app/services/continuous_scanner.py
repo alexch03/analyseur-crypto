@@ -328,6 +328,48 @@ class ContinuousScanner:
         for t in newly_opened + newly_closed:
             await insert_unit_trade(session, t, symbol_id=symbol_id, timeframe_id=timeframe_id)
 
+        # Notifications Telegram (silent fail si TG non configure)
+        try:
+            from app.tg_bot.notifier import (
+                dispatch_hypothesis_triggered, dispatch_hypothesis_closed,
+            )
+            for h in result.created + result.updated:
+                if not h.transitions:
+                    continue
+                last_t = h.transitions[-1]
+                # Recent TRIGGERED transition (sur cette bougie)
+                if (last_t.to_state.value == "TRIGGERED"
+                        and last_t.timestamp == h.triggered_at):
+                    dispatch_hypothesis_triggered(
+                        symbol=symbol, timeframe=tf,
+                        pattern=h.pattern.kind.value, side=h.side.value,
+                        entry=float(h.triggered_price or h.entry_price),
+                        target=float(h.target_price),
+                        invalidation=float(h.invalidation_price),
+                        confluence_score=float(h.confluence_score),
+                    )
+                # Close transition (TARGET_HIT / STOPPED / INVALIDATED / EXPIRED)
+                elif (last_t.to_state.value in ("TARGET_HIT", "STOPPED", "INVALIDATED", "EXPIRED")
+                        and last_t.timestamp == h.closed_at):
+                    exit_p = float(h.outcome_price or 0.0)
+                    entry_p = float(h.triggered_price or h.entry_price)
+                    if entry_p > 0 and exit_p > 0:
+                        from app.schemas.domain import Side
+                        if h.side == Side.LONG:
+                            pct = (exit_p / entry_p - 1.0) * 100
+                        else:
+                            pct = (entry_p / exit_p - 1.0) * 100
+                    else:
+                        pct = 0.0
+                    dispatch_hypothesis_closed(
+                        symbol=symbol, timeframe=tf,
+                        pattern=h.pattern.kind.value, side=h.side.value,
+                        outcome=last_t.to_state.value,
+                        entry=entry_p, exit_price=exit_p, pct_gain=pct,
+                    )
+        except Exception as e:
+            logger.debug("Telegram notify skipped: %s", e)
+
         await record_scan_run(
             session,
             symbol_id=symbol_id,
