@@ -17,13 +17,23 @@ Géométrie :
         - Target = (head − neckline_at_break) projeté sous la neckline
 
     Inverse H&S : miroir.
+
+Qualité v2 (issue de l'analyse trades) :
+    - Trend context PRE-pattern : pour qu'un retournement soit valide, il faut
+      qu'il y ait quelque chose à retourner. DOUBLE_TOP = exige uptrend AVANT,
+      DOUBLE_BOTTOM = exige downtrend AVANT.
+    - Validité des sommets : le swing high doit avoir un close dans le tiers
+      supérieur de la bougie (pas juste un wick).
+    - Espacement minimum entre swings : evite les patterns trop serrés (noise).
+    - Swing prominence : filtre les micro-swings sous ATR * threshold.
 """
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
-from app.patterns._geometry import fit_line
+from app.patterns._geometry import atr, fit_line
 from app.schemas.domain import SwingKind, SwingPoint
 from app.schemas.patterns import (
     BreakoutDirection,
@@ -32,17 +42,26 @@ from app.schemas.patterns import (
     TrendLine,
 )
 
+# ────────────────────────────────────────────────────────────────────
+# Defaults v2 (apres analyse MFE/MAE + amelioration patterns)
+# ────────────────────────────────────────────────────────────────────
 _DEFAULT_WINDOW_BARS = 120
-_DEFAULT_TWIN_TOL_PCT = 0.02            # garde permissif pour avoir un volume
+_DEFAULT_TWIN_TOL_PCT = 0.02
 _DEFAULT_SHOULDER_TOL_PCT = 0.04
 _DEFAULT_MIN_HEAD_PROMINENCE_PCT = 0.015
-_DEFAULT_MIN_NECK_DISTANCE_PCT = 0.015  # 1.5% (original)
+_DEFAULT_MIN_NECK_DISTANCE_PCT = 0.015
 _DEFAULT_NECK_BUFFER_PCT = 0.002
-# Optimisations issues de l'analyse MFE/MAE (run_loop, mai 2026) :
-# - Winners atteignent 121-138% du target initial -> target_multiplier=1.2 pour ameliorer RR
-# - SL legerement resserre pour ameliorer R:R sans tuer trigger rate
-_DEFAULT_TARGET_MULTIPLIER = 1.3        # winners font 121-138% du target naturel
-_DEFAULT_SL_TIGHTEN_PCT = 0.0           # SL naturel = invalidation pattern (trade actif plus longtemps)
+_DEFAULT_TARGET_MULTIPLIER = 1.3        # winners atteignent 121-138% du target naturel
+_DEFAULT_SL_TIGHTEN_PCT = 0.0           # SL naturel = invalidation pattern
+
+# Nouveau : qualite des patterns
+_DEFAULT_MIN_BARS_BETWEEN_SWINGS = 5    # espacement min entre les 2 tops/lows (anti-noise)
+_DEFAULT_MIN_SWING_PROMINENCE_ATR = 0.5 # swing doit etre >= 0.5x ATR (filtre micro-swings)
+_DEFAULT_REQUIRE_PRE_TREND = True       # exige trend context AVANT le pattern
+_DEFAULT_PRE_TREND_BARS = 20            # lookback pour mesurer le trend pre-pattern
+_DEFAULT_MIN_PRE_TREND_PCT = 0.008      # 0.8% min de move dans le bon sens
+_DEFAULT_REQUIRE_SWING_BODY = True      # swing high/low doit avoir un body solide
+_DEFAULT_MIN_BODY_RATIO = 0.4           # close du swing dans le tiers superieur/inferieur
 
 
 class ReversalDetector:
@@ -57,6 +76,14 @@ class ReversalDetector:
         neck_buffer_pct: float = _DEFAULT_NECK_BUFFER_PCT,
         target_multiplier: float = _DEFAULT_TARGET_MULTIPLIER,
         sl_tighten_pct: float = _DEFAULT_SL_TIGHTEN_PCT,
+        # Nouveaux params qualite
+        min_bars_between_swings: int = _DEFAULT_MIN_BARS_BETWEEN_SWINGS,
+        min_swing_prominence_atr: float = _DEFAULT_MIN_SWING_PROMINENCE_ATR,
+        require_pre_trend: bool = _DEFAULT_REQUIRE_PRE_TREND,
+        pre_trend_bars: int = _DEFAULT_PRE_TREND_BARS,
+        min_pre_trend_pct: float = _DEFAULT_MIN_PRE_TREND_PCT,
+        require_swing_body: bool = _DEFAULT_REQUIRE_SWING_BODY,
+        min_body_ratio: float = _DEFAULT_MIN_BODY_RATIO,
     ) -> None:
         self._window = window_bars
         self._twin_tol = twin_tol_pct
@@ -66,14 +93,112 @@ class ReversalDetector:
         self._neck_buf = neck_buffer_pct
         self._target_mult = float(target_multiplier)
         self._sl_tighten = float(sl_tighten_pct)
+        self._min_bars_between = int(min_bars_between_swings)
+        self._min_swing_prom_atr = float(min_swing_prominence_atr)
+        self._require_pre_trend = bool(require_pre_trend)
+        self._pre_trend_bars = int(pre_trend_bars)
+        self._min_pre_trend = float(min_pre_trend_pct)
+        self._require_body = bool(require_swing_body)
+        self._min_body_ratio = float(min_body_ratio)
+
+    # ------------------------------------------------------------------
+    # Helpers qualite
+    # ------------------------------------------------------------------
 
     def _tighten_sl(self, entry: float, raw_invalidation: float) -> float:
-        """Resserre le SL vers entry de sl_tighten_pct (0.30 = 30% plus proche).
-        Garde toujours le SL au-dessus de entry pour SHORT / au-dessous pour LONG."""
         if self._sl_tighten <= 0:
             return raw_invalidation
         sl_distance = raw_invalidation - entry
         return entry + sl_distance * (1.0 - self._sl_tighten)
+
+    def _get_atr(self, ohlcv: pd.DataFrame) -> float:
+        if len(ohlcv) < 15:
+            return 0.0
+        h = ohlcv["high"].to_numpy(dtype=float)
+        l = ohlcv["low"].to_numpy(dtype=float)
+        c = ohlcv["close"].to_numpy(dtype=float)
+        return atr(h, l, c, period=14)
+
+    def _swing_is_prominent(self, ohlcv: pd.DataFrame, swing: SwingPoint,
+                            atr_val: float) -> bool:
+        """Le swing doit dépasser ses voisins d'au moins min_prom_atr × ATR."""
+        if atr_val <= 0 or self._min_swing_prom_atr <= 0:
+            return True
+        i = swing.index
+        if i < 5 or i >= len(ohlcv) - 5:
+            return True  # bord
+        local_window = 10
+        lo_idx = max(0, i - local_window)
+        hi_idx = min(len(ohlcv), i + local_window + 1)
+        if swing.kind == SwingKind.HIGH:
+            neighbors_max = float(ohlcv["high"].iloc[lo_idx:i].max()) if i > lo_idx else 0
+            prominence = swing.price - neighbors_max
+        else:
+            neighbors_min = float(ohlcv["low"].iloc[lo_idx:i].min()) if i > lo_idx else float("inf")
+            prominence = neighbors_min - swing.price
+        return prominence >= self._min_swing_prom_atr * atr_val
+
+    def _swing_has_solid_body(self, ohlcv: pd.DataFrame, swing: SwingPoint) -> bool:
+        """Le swing high doit avoir close dans le tiers superieur de la bougie
+        (pas un long wick). Idem swing low dans le tiers inferieur.
+
+        body_ratio = (close - low) / (high - low) pour LOW
+                   = (high - close) / (high - low) pour HIGH (proximite au high)
+        On accepte si <= 1 - min_body_ratio (close proche du high pour swing HIGH).
+        """
+        if not self._require_body or self._min_body_ratio <= 0:
+            return True
+        i = swing.index
+        if i < 0 or i >= len(ohlcv):
+            return True
+        bar = ohlcv.iloc[i]
+        high = float(bar["high"])
+        low = float(bar["low"])
+        close = float(bar["close"])
+        rng = high - low
+        if rng <= 0:
+            return True
+        if swing.kind == SwingKind.HIGH:
+            # Pour HIGH : close doit etre dans le tiers superieur
+            # close/high ratio >= 1 - min_body_ratio
+            pos_in_bar = (close - low) / rng  # 0=low, 1=high
+            return pos_in_bar >= self._min_body_ratio
+        else:
+            # Pour LOW : close doit etre dans le tiers inferieur
+            pos_in_bar = (close - low) / rng
+            return pos_in_bar <= 1.0 - self._min_body_ratio
+
+    def _pre_trend_ok(self, ohlcv: pd.DataFrame, swing_index: int,
+                      expected: str) -> bool:
+        """Verifie qu'il y a un trend AVANT le pattern pour valider le retournement.
+
+        Pour DOUBLE_TOP / HEAD_SHOULDERS (bearish reversal) : exige uptrend avant.
+        Pour DOUBLE_BOTTOM / IHS (bullish reversal) : exige downtrend avant.
+
+        expected = "up" ou "down".
+        Mesure : (close[swing] - close[swing - pre_trend_bars]) / close[start].
+        """
+        if not self._require_pre_trend:
+            return True
+        start_idx = swing_index - self._pre_trend_bars
+        if start_idx < 0:
+            return False  # pas assez d'historique = on rejette
+        close_start = float(ohlcv["close"].iloc[start_idx])
+        close_end = float(ohlcv["close"].iloc[swing_index])
+        if close_start <= 0:
+            return False
+        move_pct = (close_end - close_start) / close_start
+        if expected == "up":
+            return move_pct >= self._min_pre_trend
+        else:
+            return move_pct <= -self._min_pre_trend
+
+    def _swings_well_spaced(self, sw1: SwingPoint, sw2: SwingPoint) -> bool:
+        return abs(sw2.index - sw1.index) >= self._min_bars_between
+
+    # ------------------------------------------------------------------
+    # detect (entry point)
+    # ------------------------------------------------------------------
 
     def detect(
         self,
@@ -88,7 +213,14 @@ class ReversalDetector:
             return []
         last_idx = n - 1
         start_window = max(0, last_idx - self._window)
-        recent = sorted([s for s in swings if start_window <= s.index <= last_idx], key=lambda s: s.index)
+
+        # Filtre prominence ATR sur les swings (vire les micro-swings noise)
+        atr_val = self._get_atr(ohlcv)
+        all_recent = sorted(
+            [s for s in swings if start_window <= s.index <= last_idx],
+            key=lambda s: s.index,
+        )
+        recent = [s for s in all_recent if self._swing_is_prominent(ohlcv, s, atr_val)]
 
         out: list[ChartPatternDTO] = []
         out.extend(self._detect_double_top(ohlcv, recent, symbol, timeframe))
@@ -98,7 +230,7 @@ class ReversalDetector:
         return out
 
     # ------------------------------------------------------------------
-    # Double top
+    # Double top (bearish reversal)
     # ------------------------------------------------------------------
     def _detect_double_top(self, ohlcv, swings, symbol, timeframe) -> list[ChartPatternDTO]:
         last_close = float(ohlcv["close"].iloc[-1])
@@ -110,27 +242,37 @@ class ReversalDetector:
             return []
         h2 = highs[-1]
         h1 = highs[-2]
+        # 1. Espacement temporel minimum
+        if not self._swings_well_spaced(h1, h2):
+            return []
+        # 2. Twin tolerance (prix proches)
         avg = (h1.price + h2.price) / 2.0
         if abs(h1.price - h2.price) / avg > self._twin_tol:
             return []
+        # 3. Pre-trend : doit y avoir un uptrend AVANT le 1er top
+        if not self._pre_trend_ok(ohlcv, h1.index, "up"):
+            return []
+        # 4. Validite des sommets (body solide, pas un wick)
+        if not self._swing_has_solid_body(ohlcv, h1):
+            return []
+        if not self._swing_has_solid_body(ohlcv, h2):
+            return []
+        # 5. Neckline geometry
         between_lows = [s for s in swings if s.kind == SwingKind.LOW and h1.index < s.index < h2.index]
         if not between_lows:
             return []
         neckline = min(between_lows, key=lambda s: s.price)
         if (avg - neckline.price) / avg < self._min_neck:
             return []
-        # Pattern non encore cassé : close > neckline (avec un peu de tolérance)
+        # Pattern non encore cassé
         if last_close < neckline.price * (1.0 - self._neck_buf):
             return []
-        # Et close pas au-dessus du double top
         if last_close > avg * (1.0 + self._twin_tol):
             return []
 
         height = avg - neckline.price
-        # SL = max(h1,h2) resserre vers entree pour ameliorer RR
         raw_inv = max(h1.price, h2.price)
         tightened_inv = self._tighten_sl(neckline.price, raw_inv)
-        # Target etendu pour capturer les winners qui font 138% du target naturel
         target_extended = neckline.price - height * self._target_mult
         confidence = _score_twin(h1.price, h2.price, neckline.price, last_close, avg)
         return [ChartPatternDTO(
@@ -152,14 +294,13 @@ class ReversalDetector:
                 "high2": (h2.index, h2.price),
                 "neckline_price": neckline.price,
                 "neckline_index": neckline.index,
+                "pre_trend_validated": True,
             },
         )]
 
     # ------------------------------------------------------------------
-    # Double bottom (miroir)
+    # Double bottom (bullish reversal)
     # ------------------------------------------------------------------
-    # NOTE optimisation : conditions identiques a DOUBLE_TOP (les ecarts
-    # rentabilite viennent de la confluence trend HTF, pas de la geometrie).
     def _detect_double_bottom(self, ohlcv, swings, symbol, timeframe) -> list[ChartPatternDTO]:
         last_close = float(ohlcv["close"].iloc[-1])
         if last_close <= 0:
@@ -170,9 +311,22 @@ class ReversalDetector:
             return []
         l2 = lows[-1]
         l1 = lows[-2]
+        # 1. Espacement temporel minimum
+        if not self._swings_well_spaced(l1, l2):
+            return []
+        # 2. Twin tolerance
         avg = (l1.price + l2.price) / 2.0
         if abs(l1.price - l2.price) / avg > self._twin_tol:
             return []
+        # 3. Pre-trend : doit y avoir un downtrend AVANT le 1er bottom
+        if not self._pre_trend_ok(ohlcv, l1.index, "down"):
+            return []
+        # 4. Validite des creux
+        if not self._swing_has_solid_body(ohlcv, l1):
+            return []
+        if not self._swing_has_solid_body(ohlcv, l2):
+            return []
+        # 5. Neckline
         between_highs = [s for s in swings if s.kind == SwingKind.HIGH and l1.index < s.index < l2.index]
         if not between_highs:
             return []
@@ -207,6 +361,7 @@ class ReversalDetector:
                 "low2": (l2.index, l2.price),
                 "neckline_price": neckline.price,
                 "neckline_index": neckline.index,
+                "pre_trend_validated": True,
             },
         )]
 
@@ -222,6 +377,9 @@ class ReversalDetector:
         if len(highs) < 3:
             return []
         ls, head, rs = highs[-3], highs[-2], highs[-1]
+        # Espacement entre LS, head et RS
+        if not self._swings_well_spaced(ls, head) or not self._swings_well_spaced(head, rs):
+            return []
         # Head doit être plus haut que les épaules d'au moins X%
         if head.price <= ls.price * (1.0 + self._head_prom):
             return []
@@ -231,7 +389,17 @@ class ReversalDetector:
         avg_sh = (ls.price + rs.price) / 2.0
         if abs(ls.price - rs.price) / avg_sh > self._shoulder_tol:
             return []
-        # Neckline = régression sur les 2 lows entre les sommets
+        # Pre-trend uptrend avant pattern
+        if not self._pre_trend_ok(ohlcv, ls.index, "up"):
+            return []
+        # Validite des sommets
+        if not self._swing_has_solid_body(ohlcv, ls):
+            return []
+        if not self._swing_has_solid_body(ohlcv, head):
+            return []
+        if not self._swing_has_solid_body(ohlcv, rs):
+            return []
+        # Neckline
         neck_lows = [
             s for s in swings
             if s.kind == SwingKind.LOW and ls.index < s.index < rs.index
@@ -292,12 +460,23 @@ class ReversalDetector:
         if len(lows) < 3:
             return []
         ls, head, rs = lows[-3], lows[-2], lows[-1]
+        if not self._swings_well_spaced(ls, head) or not self._swings_well_spaced(head, rs):
+            return []
         if head.price >= ls.price * (1.0 - self._head_prom):
             return []
         if head.price >= rs.price * (1.0 - self._head_prom):
             return []
         avg_sh = (ls.price + rs.price) / 2.0
         if abs(ls.price - rs.price) / avg_sh > self._shoulder_tol:
+            return []
+        # Pre-trend downtrend avant pattern
+        if not self._pre_trend_ok(ohlcv, ls.index, "down"):
+            return []
+        if not self._swing_has_solid_body(ohlcv, ls):
+            return []
+        if not self._swing_has_solid_body(ohlcv, head):
+            return []
+        if not self._swing_has_solid_body(ohlcv, rs):
             return []
         neck_highs = [
             s for s in swings

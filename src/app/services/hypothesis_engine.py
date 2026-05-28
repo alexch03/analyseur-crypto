@@ -59,6 +59,10 @@ _DEFAULT_BREAKEVEN_TRIGGER_PCT = 0.0    # BE desactive : sur ce dataset il conve
 _DEFAULT_BREAKOUT_BUFFER_PCT = 0.0
 _DEFAULT_TRAILING_ATR_MULT = 0.0        # 0 = pas de trailing ; ex 2.0 = SL trail a bar_low - 2*ATR (LONG)
 _DEFAULT_TRAILING_ACTIVATION_PCT = 0.5  # active le trailing apres 50% du chemin vers target
+# Body ratio minimum pour confirmer un breakout (filtre les wicks)
+# 0.3 = au moins 30% de la bougie est du body (60% wicks max).
+# 0.0 = desactive (legacy)
+_DEFAULT_MIN_BREAKOUT_BODY_RATIO = 0.3
 
 
 class HypothesisEngine:
@@ -79,6 +83,7 @@ class HypothesisEngine:
         excluded_patterns: tuple[str, ...] = (),
         trailing_stop_atr_mult: float = _DEFAULT_TRAILING_ATR_MULT,
         trailing_activation_pct: float = _DEFAULT_TRAILING_ACTIVATION_PCT,
+        min_breakout_body_ratio: float = _DEFAULT_MIN_BREAKOUT_BODY_RATIO,
     ) -> None:
         self._arm_prox = arm_proximity_pct
         self._expiry_bars = expiry_bars
@@ -94,6 +99,7 @@ class HypothesisEngine:
         self._excluded = tuple(excluded_patterns)
         self._trail_atr_mult = float(trailing_stop_atr_mult)
         self._trail_activate = float(trailing_activation_pct)
+        self._min_breakout_body = float(min_breakout_body_ratio)
 
     def step(
         self,
@@ -106,6 +112,7 @@ class HypothesisEngine:
 
         last = ohlcv.iloc[-1]
         now_ts = _to_dt(last["timestamp"])
+        bar_open = float(last["open"])
         bar_close = float(last["close"])
         bar_high = float(last["high"])
         bar_low = float(last["low"])
@@ -113,6 +120,11 @@ class HypothesisEngine:
 
         # Calcul ATR pour le trailing stop dynamique
         atr_val = _compute_atr(ohlcv, period=14)
+
+        # Body ratio de la bougie : |close - open| / (high - low)
+        # Utile pour confirmer un breakout (body fort = momentum reel, pas wick)
+        bar_range = bar_high - bar_low
+        bar_body_ratio = abs(bar_close - bar_open) / bar_range if bar_range > 0 else 0.0
 
         active = [h for h in existing if not h.is_terminal]
         terminal = [h for h in existing if h.is_terminal]
@@ -129,6 +141,7 @@ class HypothesisEngine:
                 now_ts=now_ts,
                 last_idx=last_idx,
                 atr_val=atr_val,
+                bar_body_ratio=bar_body_ratio,
             )
             progressed.append(new_h)
             transitions.extend((new_h.id, t) for t in h_trans)
@@ -165,6 +178,7 @@ class HypothesisEngine:
                 now_ts=now_ts,
                 last_idx=last_idx,
                 atr_val=atr_val,
+                bar_body_ratio=bar_body_ratio,
             )
             spawned.append(h_evaluated)
             transitions.extend((h_evaluated.id, t) for t in h_trans)
@@ -188,20 +202,21 @@ class HypothesisEngine:
         now_ts: datetime,
         last_idx: int,
         atr_val: float = 0.0,
+        bar_body_ratio: float = 1.0,
     ) -> tuple[HypothesisDTO, list[StateTransition]]:
         transitions: list[StateTransition] = []
         current = h
         was_triggered_at_entry = (current.state == HypothesisState.TRIGGERED)
 
         if current.state == HypothesisState.FORMING:
-            new_state, reason = self._eval_forming(current, bar_close)
+            new_state, reason = self._eval_forming(current, bar_close, bar_body_ratio)
             if new_state is not None:
                 t = self._make_transition(current.state, new_state, now_ts, bar_close, reason)
                 transitions.append(t)
                 current = self._apply_transition(current, new_state, now_ts, bar_close, t)
 
         if current.state == HypothesisState.ARMED:
-            new_state, reason = self._eval_armed(current, bar_close)
+            new_state, reason = self._eval_armed(current, bar_close, bar_body_ratio)
             if new_state is not None:
                 t = self._make_transition(current.state, new_state, now_ts, bar_close, reason)
                 transitions.append(t)
@@ -263,26 +278,26 @@ class HypothesisEngine:
         return current, transitions
 
     def _eval_forming(
-        self, h: HypothesisDTO, close: float
+        self, h: HypothesisDTO, close: float, body_ratio: float = 1.0
     ) -> tuple[HypothesisState | None, str]:
         if _invalidation_hit(h, close):
             return HypothesisState.INVALIDATED, "invalidation level hit before arming"
-        if _breakout_confirmed(h, close, self._breakout_buf):
+        if _breakout_confirmed(h, close, self._breakout_buf, body_ratio, self._min_breakout_body):
             return HypothesisState.TRIGGERED, (
-                f"breakout fired directly from forming (>{self._breakout_buf:.2%} beyond)"
+                f"breakout fired from forming (body_ratio={body_ratio:.2f})"
             )
         if _within_arm_zone(h, close, self._arm_prox):
             return HypothesisState.ARMED, "close within arm proximity of breakout"
         return None, ""
 
     def _eval_armed(
-        self, h: HypothesisDTO, close: float
+        self, h: HypothesisDTO, close: float, body_ratio: float = 1.0
     ) -> tuple[HypothesisState | None, str]:
         if _invalidation_hit(h, close):
             return HypothesisState.INVALIDATED, "invalidation level hit before trigger (order cancelled)"
-        if _breakout_confirmed(h, close, self._breakout_buf):
+        if _breakout_confirmed(h, close, self._breakout_buf, body_ratio, self._min_breakout_body):
             return HypothesisState.TRIGGERED, (
-                f"breakout confirmed (close > {self._breakout_buf:.2%} beyond level)"
+                f"breakout confirmed (body_ratio={body_ratio:.2f} >= {self._min_breakout_body:.2f})"
             )
         return None, ""
 
@@ -610,14 +625,33 @@ def _breakout_hit(h: HypothesisDTO, close: float) -> bool:
     return close < h.entry_price
 
 
-def _breakout_confirmed(h: HypothesisDTO, close: float, buffer_pct: float) -> bool:
-    """Breakout confirme si la close est au-dela du breakout level par buffer_pct.
-    Filtre les faux signaux (wicks qui repassent la neckline mais ne tiennent pas)."""
+def _breakout_confirmed(
+    h: HypothesisDTO, close: float, buffer_pct: float,
+    body_ratio: float = 1.0, min_body_ratio: float = 0.0,
+) -> bool:
+    """Breakout confirme si :
+    1) la close est au-dela du breakout level (+ buffer_pct optionnel)
+    2) le body de la bougie est >= min_body_ratio (filtre wicks)
+
+    Pour LONG : close >= entry × (1+buffer)
+    Pour SHORT : close <= entry × (1-buffer)
+
+    body_ratio = |close - open| / (high - low). Une bougie de pure tendance
+    a body_ratio ~ 1, un doji ~ 0.
+    """
+    # 1. Position de la close
     if h.side == Side.LONG:
         threshold = h.entry_price * (1.0 + buffer_pct)
-        return close >= threshold
-    threshold = h.entry_price * (1.0 - buffer_pct)
-    return close <= threshold
+        if close < threshold:
+            return False
+    else:
+        threshold = h.entry_price * (1.0 - buffer_pct)
+        if close > threshold:
+            return False
+    # 2. Body solide (anti-wick)
+    if min_body_ratio > 0 and body_ratio < min_body_ratio:
+        return False
+    return True
 
 
 def _within_arm_zone(h: HypothesisDTO, close: float, prox_pct: float) -> bool:
