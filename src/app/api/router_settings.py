@@ -27,7 +27,7 @@ ENV_FILE = ROOT / ".env"
 
 
 def _read_env() -> dict[str, str]:
-    """Parse .env en dict (preserve commentaires en .env mais retire ici)."""
+    """Parse .env en dict (gere commentaires inline VAR=val  # comment)."""
     if not ENV_FILE.exists():
         return {}
     out: dict[str, str] = {}
@@ -36,7 +36,12 @@ def _read_env() -> dict[str, str]:
         if not line or line.startswith("#") or "=" not in line:
             continue
         k, v = line.split("=", 1)
-        out[k.strip()] = v.strip().strip('"').strip("'")
+        v = v.strip()
+        # Strip inline comment : "value  # comment" -> "value"
+        if "#" in v and not (v.startswith('"') or v.startswith("'")):
+            v = v.split("#", 1)[0].strip()
+        v = v.strip('"').strip("'").strip()
+        out[k.strip()] = v
     return out
 
 
