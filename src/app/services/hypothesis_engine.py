@@ -57,6 +57,8 @@ _DEFAULT_REJECT_TREND_COUNTER = True    # CRITIQUE : DOUBLE_BOTTOM en downtrend 
 _DEFAULT_REQUIRE_VOLUME = False
 _DEFAULT_BREAKEVEN_TRIGGER_PCT = 0.0    # BE desactive : sur ce dataset il convertit wins en BE
 _DEFAULT_BREAKOUT_BUFFER_PCT = 0.0
+_DEFAULT_TRAILING_ATR_MULT = 0.0        # 0 = pas de trailing ; ex 2.0 = SL trail a bar_low - 2*ATR (LONG)
+_DEFAULT_TRAILING_ACTIVATION_PCT = 0.5  # active le trailing apres 50% du chemin vers target
 
 
 class HypothesisEngine:
@@ -75,6 +77,8 @@ class HypothesisEngine:
         breakout_buffer_pct: float = _DEFAULT_BREAKOUT_BUFFER_PCT,
         require_volume_weak_reject: bool = False,
         excluded_patterns: tuple[str, ...] = (),
+        trailing_stop_atr_mult: float = _DEFAULT_TRAILING_ATR_MULT,
+        trailing_activation_pct: float = _DEFAULT_TRAILING_ACTIVATION_PCT,
     ) -> None:
         self._arm_prox = arm_proximity_pct
         self._expiry_bars = expiry_bars
@@ -88,6 +92,8 @@ class HypothesisEngine:
         self._be_trigger = float(breakeven_trigger_pct)
         self._breakout_buf = float(breakout_buffer_pct)
         self._excluded = tuple(excluded_patterns)
+        self._trail_atr_mult = float(trailing_stop_atr_mult)
+        self._trail_activate = float(trailing_activation_pct)
 
     def step(
         self,
@@ -105,6 +111,9 @@ class HypothesisEngine:
         bar_low = float(last["low"])
         last_idx = len(ohlcv) - 1
 
+        # Calcul ATR pour le trailing stop dynamique
+        atr_val = _compute_atr(ohlcv, period=14)
+
         active = [h for h in existing if not h.is_terminal]
         terminal = [h for h in existing if h.is_terminal]
         transitions: list[tuple[str, StateTransition]] = []
@@ -119,6 +128,7 @@ class HypothesisEngine:
                 bar_low=bar_low,
                 now_ts=now_ts,
                 last_idx=last_idx,
+                atr_val=atr_val,
             )
             progressed.append(new_h)
             transitions.extend((new_h.id, t) for t in h_trans)
@@ -154,6 +164,7 @@ class HypothesisEngine:
                 bar_low=bar_low,
                 now_ts=now_ts,
                 last_idx=last_idx,
+                atr_val=atr_val,
             )
             spawned.append(h_evaluated)
             transitions.extend((h_evaluated.id, t) for t in h_trans)
@@ -176,6 +187,7 @@ class HypothesisEngine:
         bar_low: float,
         now_ts: datetime,
         last_idx: int,
+        atr_val: float = 0.0,
     ) -> tuple[HypothesisDTO, list[StateTransition]]:
         transitions: list[StateTransition] = []
         current = h
@@ -200,6 +212,7 @@ class HypothesisEngine:
             # (sinon on bouge le SL au-dessus du low de cette bougie, stop immediat).
             # Le BE s'applique uniquement aux bougies suivantes.
             if was_triggered_at_entry:
+                # 1) BE classique : SL passe a entry quand X% du target atteint
                 be_updated = self._maybe_breakeven_trail(
                     current, bar_high=bar_high, bar_low=bar_low, bar_close=bar_close,
                 )
@@ -210,6 +223,18 @@ class HypothesisEngine:
                     )
                     transitions.append(t)
                     current = replace(be_updated, transitions=current.transitions + (t,), updated_at=now_ts)
+                # 2) Trailing stop ATR : monte le SL avec le prix pour faire courir les winners
+                trail_updated = self._maybe_atr_trailing(
+                    current, bar_high=bar_high, bar_low=bar_low, bar_close=bar_close,
+                    atr_val=atr_val,
+                )
+                if trail_updated is not None:
+                    t = self._make_transition(
+                        current.state, current.state, now_ts, bar_close,
+                        f"trailing stop ATR @ {trail_updated.invalidation_price:.4f}",
+                    )
+                    transitions.append(t)
+                    current = replace(trail_updated, transitions=current.transitions + (t,), updated_at=now_ts)
 
             new_state, exit_price, reason = self._eval_triggered(
                 current, bar_high=bar_high, bar_low=bar_low
@@ -275,6 +300,52 @@ class HypothesisEngine:
             if bar_low <= h.target_price:
                 return HypothesisState.TARGET_HIT, h.target_price, "target hit (low)"
         return None, 0.0, ""
+
+    def _maybe_atr_trailing(
+        self, h: HypothesisDTO, *, bar_high: float, bar_low: float,
+        bar_close: float, atr_val: float,
+    ) -> HypothesisDTO | None:
+        """Trailing stop dynamique base sur ATR. Maximise les winners en suivant la
+        tendance : le SL monte avec le prix (jamais en arriere).
+
+        Activation : trade au-dela de trail_activate_pct (defaut 50%) du target.
+        Distance : bar_low - mult * ATR (LONG) / bar_high + mult * ATR (SHORT).
+
+        Combinable avec BE classique : si BE deja active (be_locked), on continue
+        a monter le SL via trailing.
+        """
+        if self._trail_atr_mult <= 0.0 or atr_val <= 0.0:
+            return None
+        if h.triggered_price is None:
+            return None
+        target_dist = abs(h.target_price - h.triggered_price)
+        if target_dist <= 0:
+            return None
+
+        # Active seulement apres trail_activate_pct du chemin vers target
+        if h.side == Side.LONG:
+            progress = (bar_close - h.triggered_price) / target_dist
+            if progress < self._trail_activate:
+                return None
+            # Trail SL : suivre bar_low avec un buffer ATR
+            candidate_sl = bar_low - self._trail_atr_mult * atr_val
+            # SL ne descend jamais ; doit etre > entry pour locker du profit
+            if candidate_sl > h.invalidation_price:
+                tags = h.confluence_tags
+                if "trail_active" not in tags:
+                    tags = tags + ("trail_active",)
+                return replace(h, invalidation_price=candidate_sl, confluence_tags=tags)
+        else:  # SHORT
+            progress = (h.triggered_price - bar_close) / target_dist
+            if progress < self._trail_activate:
+                return None
+            candidate_sl = bar_high + self._trail_atr_mult * atr_val
+            if candidate_sl < h.invalidation_price:
+                tags = h.confluence_tags
+                if "trail_active" not in tags:
+                    tags = tags + ("trail_active",)
+                return replace(h, invalidation_price=candidate_sl, confluence_tags=tags)
+        return None
 
     def _maybe_breakeven_trail(
         self, h: HypothesisDTO, *, bar_high: float, bar_low: float,
@@ -565,3 +636,24 @@ def _to_dt(value) -> datetime:
     if isinstance(value, datetime):
         return value
     return pd.Timestamp(value).to_pydatetime()
+
+
+def _compute_atr(ohlcv: pd.DataFrame, period: int = 14) -> float:
+    """ATR simple sur les ``period`` dernieres bougies (True Range moyenne).
+
+    Renvoie 0.0 si pas assez de donnees ou si volatilite nulle.
+    """
+    if len(ohlcv) < period + 1:
+        return 0.0
+    try:
+        high = ohlcv["high"].iloc[-(period + 1):].to_numpy()
+        low = ohlcv["low"].iloc[-(period + 1):].to_numpy()
+        close = ohlcv["close"].iloc[-(period + 1):].to_numpy()
+        prev_close = close[:-1]
+        h_l = high[1:] - low[1:]
+        h_pc = abs(high[1:] - prev_close)
+        l_pc = abs(low[1:] - prev_close)
+        tr = pd.Series([max(a, b, c) for a, b, c in zip(h_l, h_pc, l_pc)])
+        return float(tr.mean())
+    except Exception:
+        return 0.0

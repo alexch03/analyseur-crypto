@@ -47,8 +47,15 @@ SYMBOLS_FULL = [
     "ADA/USDT", "AVAX/USDT", "DOT/USDT", "LINK/USDT", "DOGE/USDT",
 ]
 SYMBOLS_QUICK = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT"]
-TIMEFRAME = "15m"
-BARS_PER_DAY = 4 * 24  # 96 bougies/jour × 15m
+
+# Bars par jour pour les TF supportes
+BARS_PER_DAY_MAP = {
+    "1m": 60 * 24,    # 1440 bougies/jour - plus precis
+    "5m": 12 * 24,    # 288
+    "15m": 4 * 24,    # 96
+    "1h": 24,
+    "4h": 6,
+}
 
 
 # ============================================================
@@ -111,6 +118,7 @@ async def _run_backfill(
     symbols: list[str],
     history_bars: int,
     *,
+    timeframe: str = "15m",
     min_conf: float = 0.0,
     reject_counter: bool = False,
     require_volume: bool = False,
@@ -118,17 +126,59 @@ async def _run_backfill(
     min_rr: float = 0.0,
     excluded_patterns: list[str] | None = None,
     reject_volume_weak: bool = False,
+    trailing_stop_atr_mult: float = 0.0,
 ) -> dict:
     # Import apres le reload des modules
     from app.services.continuous_scanner import ContinuousScanner, ScanPlan
     from app.services.hypothesis_engine import HypothesisEngine, ConfluenceScorer
+    from app.patterns.channels import ChannelDetector
+    from app.patterns.flags import FlagDetector
+    from app.patterns.rectangles import RectangleDetector
+    from app.patterns.reversal import ReversalDetector
+    from app.patterns.triangles import TriangleDetector
+    from app.patterns.wedges import WedgeDetector
+
+    # Adapte les params des detecteurs au TF (1m = moves plus petits + window plus large)
+    if timeframe == "1m":
+        reversal = ReversalDetector(
+            window_bars=360,           # 6h de structure
+            twin_tol_pct=0.008,        # tops/bottoms dans 0.8%
+            min_neck_distance_pct=0.008,
+            min_head_prominence_pct=0.005,
+        )
+        triangle = TriangleDetector(window_bars=360, min_height_pct=0.005)
+        rectangle = RectangleDetector(window_bars=360, min_range_pct=0.005)
+        channel = ChannelDetector(window_bars=360)
+        wedge = WedgeDetector(window_bars=360, min_height_pct=0.005)
+        flag = FlagDetector()  # pas de window_bars
+    elif timeframe == "5m":
+        reversal = ReversalDetector(
+            window_bars=240, twin_tol_pct=0.012, min_neck_distance_pct=0.012,
+        )
+        triangle = TriangleDetector(window_bars=240)
+        rectangle = RectangleDetector(window_bars=240)
+        channel = ChannelDetector(window_bars=240)
+        wedge = WedgeDetector(window_bars=240)
+        flag = FlagDetector()
+    else:
+        reversal = ReversalDetector()
+        triangle = TriangleDetector()
+        rectangle = RectangleDetector()
+        channel = ChannelDetector()
+        wedge = WedgeDetector()
+        flag = FlagDetector()
 
     plan = ScanPlan(
         symbols=symbols,
-        timeframes=[TIMEFRAME],
+        timeframes=[timeframe],
         candles_per_fetch=history_bars + 60,
+        detectors=[triangle, rectangle, channel, wedge, flag, reversal],
     )
     scanner = ContinuousScanner(plan=plan)
+    # Expiry adapte au TF : 40 bars = 10h en 15m mais 40min en 1m ! On scale.
+    expiry_bars_per_tf = {"1m": 240, "5m": 96, "15m": 40, "1h": 24, "4h": 12}
+    expiry = expiry_bars_per_tf.get(timeframe, 40)
+
     scanner._engine = HypothesisEngine(
         confluence_scorer=ConfluenceScorer(),
         min_confluence_score=min_conf,
@@ -138,6 +188,8 @@ async def _run_backfill(
         breakeven_trigger_pct=breakeven_pct,
         min_rr_ratio=min_rr,
         excluded_patterns=tuple(excluded_patterns or ()),
+        trailing_stop_atr_mult=trailing_stop_atr_mult,
+        expiry_bars=expiry,
     )
     try:
         result = await scanner.backfill(
@@ -358,30 +410,28 @@ async def main(args) -> None:
     setup_logging(level_console=logging.WARNING, disable_file=True)
 
     symbols = SYMBOLS_QUICK if args.quick else SYMBOLS_FULL
-    history_bars = args.days * BARS_PER_DAY
+    if args.tf not in BARS_PER_DAY_MAP:
+        print(f"TF {args.tf} non supporte. Choix: {list(BARS_PER_DAY_MAP.keys())}")
+        return
+    bars_per_day = BARS_PER_DAY_MAP[args.tf]
+    history_bars = args.days * bars_per_day
 
     print("=" * 72)
-    print(f"BOUCLE OPTIMISATION : {args.days} jours × {len(symbols)} symboles × {TIMEFRAME}")
+    print(f"BOUCLE OPTIMISATION : {args.days} jours × {len(symbols)} symboles × {args.tf}")
     print(f"  {history_bars} bougies | {args.iterations} iteration(s)")
     print("=" * 72)
 
-    # Config initiale = defaults de l'engine (BE 0.3 active, trend_counter rejete)
-    # Pour partir d'un baseline RAW (zero filtre), mettre tout a 0.
-    from app.services.hypothesis_engine import (
-        _DEFAULT_BREAKEVEN_TRIGGER_PCT,
-        _DEFAULT_MIN_CONFLUENCE,
-        _DEFAULT_MIN_RR,
-        _DEFAULT_REJECT_TREND_COUNTER,
-        _DEFAULT_REQUIRE_VOLUME,
-    )
+    # Config initiale RAW (zero filtre) - le grid search trouvera la meilleure
+    # config a appliquer en iter 2
     cur_cfg: dict = {
-        "min_conf": _DEFAULT_MIN_CONFLUENCE,
-        "reject_counter": _DEFAULT_REJECT_TREND_COUNTER,
-        "require_volume": _DEFAULT_REQUIRE_VOLUME,
-        "breakeven_pct": _DEFAULT_BREAKEVEN_TRIGGER_PCT,
-        "min_rr": _DEFAULT_MIN_RR,
+        "min_conf": 0.0,
+        "reject_counter": False,
+        "require_volume": False,
+        "breakeven_pct": 0.0,
+        "min_rr": 0.0,
         "excluded_patterns": [],
         "reject_volume_weak": False,
+        "trailing_stop_atr_mult": 0.0,
     }
 
     best_compound = -9999.0
@@ -401,9 +451,9 @@ async def main(args) -> None:
         print(f"{'-'*72}")
 
         # A. Reset + backfill
-        print(f"\n[A] Reset + backfill ({history_bars} bougies) ...")
+        print(f"\n[A] Reset + backfill ({history_bars} bougies de {args.tf}) ...")
         await _reset_db(db_name)
-        bf = await _run_backfill(symbols, history_bars, **cur_cfg)
+        bf = await _run_backfill(symbols, history_bars, timeframe=args.tf, **cur_cfg)
         print(f"    {bf.get('total_steps', 0)} steps | "
               f"{bf.get('total_patterns_detected', 0)} patterns")
 
@@ -448,6 +498,8 @@ async def main(args) -> None:
             new_cfg["require_volume"] = "volume_expansion" in cfg_v.get("required_tags", [])
             new_cfg["reject_volume_weak"] = "volume_weak" in cfg_v.get("reject_tags", [])
             new_cfg["excluded_patterns"] = list(excluded)
+            # Active le trailing stop ATR en iter 2 pour faire courir les winners
+            new_cfg["trailing_stop_atr_mult"] = 2.0
         else:
             print(f"\n[C] Grid search : pas assez de trades (min 15)")
 
@@ -560,6 +612,8 @@ def parse_args():
                    help="Nombre de boucles (defaut: 2)")
     p.add_argument("--quick", action="store_true",
                    help="Seulement 4 symboles (BTC/ETH/SOL/XRP) — plus rapide")
+    p.add_argument("--tf", default="15m", choices=["1m", "5m", "15m", "1h", "4h"],
+                   help="Timeframe pour le scan (defaut: 15m, 1m = plus precis)")
     return p.parse_args()
 
 
