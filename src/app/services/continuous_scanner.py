@@ -29,6 +29,7 @@ from app.ingestion.ccxt_fetcher import CCXTFetcher
 from app.market_structure.swings import detect_swings
 from app.patterns._quality import QualityWrappedDetector
 from app.patterns.channels import ChannelDetector
+from app.patterns.cup_and_handle import CupHandleDetector
 from app.patterns.expanding_triangles import ExpandingTriangleDetector
 from app.patterns.flags import FlagDetector
 from app.patterns.interfaces import PatternDetector
@@ -78,6 +79,7 @@ def default_detectors() -> list[PatternDetector]:
         QualityWrappedDetector(TripleDetector()),
         QualityWrappedDetector(ExpandingTriangleDetector()),
         QualityWrappedDetector(PennantDetector()),
+        QualityWrappedDetector(CupHandleDetector()),  # Cup & Handle + inverse
     ]
 
 

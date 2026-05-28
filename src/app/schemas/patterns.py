@@ -35,6 +35,8 @@ class PatternKind(str, enum.Enum):
     EXPANDING_TRIANGLE_SYM = "EXPANDING_TRIANGLE_SYM"
     PENNANT_BULL = "PENNANT_BULL"
     PENNANT_BEAR = "PENNANT_BEAR"
+    CUP_AND_HANDLE = "CUP_AND_HANDLE"
+    INVERSE_CUP_AND_HANDLE = "INVERSE_CUP_AND_HANDLE"
 
 
 class BreakoutDirection(str, enum.Enum):
