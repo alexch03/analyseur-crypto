@@ -202,10 +202,20 @@ class ContinuousScanner:
                 if delay_s > 0:
                     await asyncio.sleep(delay_s)
         elapsed = _t.monotonic() - t_start
-        logger.info("Cycle done: ok=%d failed=%d in %.1fs (%d pairs, delay=%dms)",
-                     ok, failed, elapsed,
-                     len(self._plan.symbols) * len(self._plan.timeframes),
-                     settings.scan_pair_delay_ms)
+        n_symbols = len(self._plan.symbols)
+        n_tfs = len(self._plan.timeframes)
+        total = n_symbols * n_tfs
+        # Warn si cycle > interval (le scanner ne respire pas)
+        warn = ""
+        if elapsed > settings.scan_interval_seconds:
+            warn = f"  ⚠️ cycle>interval ({elapsed:.0f}s > {settings.scan_interval_seconds}s)"
+        logger.info(
+            "Cycle done: %d/%d OK (%d failed) in %.1fs"
+            "  =  %d symbols x %d TF (%s) | delay=%dms%s",
+            ok, total, failed, elapsed, n_symbols, n_tfs,
+            ",".join(self._plan.timeframes),
+            settings.scan_pair_delay_ms, warn,
+        )
 
     async def scan_once(self) -> dict:
         """Une passe immédiate, retourne un résumé. Idempotent."""
