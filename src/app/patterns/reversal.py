@@ -30,10 +30,23 @@ Qualité v2 (issue de l'analyse trades) :
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 import pandas as pd
 
 from app.patterns._geometry import atr, fit_line
+from app.patterns._indicators import (
+    bearish_rsi_div_on_tops,
+    bullish_rsi_div_on_bottoms,
+    compute_rsi,
+    compute_volume_sma,
+    compute_vwap_rolling,
+    price_above_vwap,
+    price_below_vwap,
+    volume_accumulation_on_bottoms,
+    volume_exhaustion_on_tops,
+)
 from app.schemas.domain import SwingKind, SwingPoint
 from app.schemas.patterns import (
     BreakoutDirection,
@@ -63,6 +76,26 @@ _DEFAULT_MIN_PRE_TREND_PCT = 0.008      # 0.8% min de move dans le bon sens
 _DEFAULT_REQUIRE_SWING_BODY = True      # swing high/low doit avoir un body solide
 _DEFAULT_MIN_BODY_RATIO = 0.4           # close du swing dans le tiers superieur/inferieur
 
+# Confluence RSI / VWAP / Volume (v3)
+# RSI : divergence requise = baisse de momentum confirmee (excellent signal)
+# Volume : OFF par defaut car divise trop le volume sans gain net (88.9% win mais
+#          -10% cumul vs RSI seul)
+# VWAP : OFF par defaut (peu d'impact additionnel sur 15m crypto majors)
+_DEFAULT_REQUIRE_RSI_DIVERGENCE = True  # exige divergence RSI sur sommets/creux
+_DEFAULT_MIN_RSI_DIV_POINTS = 2.0       # 2 pts RSI (compromise qualite/volume)
+_DEFAULT_REQUIRE_VOLUME_CONFIRMATION = False  # OFF par defaut (trop strict combine a RSI)
+_DEFAULT_REQUIRE_VWAP_ALIGNMENT = False # OFF par defaut
+_DEFAULT_VWAP_PERIOD = 96               # VWAP rolling sur 1 jour (15m x 96 = 1d)
+
+
+@dataclass
+class _IndicatorContext:
+    """Indicateurs precalcules pour eviter le recalcul a chaque detection."""
+    rsi: np.ndarray | None = None
+    vwap: np.ndarray | None = None
+    volumes: np.ndarray | None = None
+    last_vwap: float = float("nan")
+
 
 class ReversalDetector:
     def __init__(
@@ -84,6 +117,11 @@ class ReversalDetector:
         min_pre_trend_pct: float = _DEFAULT_MIN_PRE_TREND_PCT,
         require_swing_body: bool = _DEFAULT_REQUIRE_SWING_BODY,
         min_body_ratio: float = _DEFAULT_MIN_BODY_RATIO,
+        require_rsi_divergence: bool = _DEFAULT_REQUIRE_RSI_DIVERGENCE,
+        min_rsi_divergence_points: float = _DEFAULT_MIN_RSI_DIV_POINTS,
+        require_volume_confirmation: bool = _DEFAULT_REQUIRE_VOLUME_CONFIRMATION,
+        require_vwap_alignment: bool = _DEFAULT_REQUIRE_VWAP_ALIGNMENT,
+        vwap_period: int = _DEFAULT_VWAP_PERIOD,
     ) -> None:
         self._window = window_bars
         self._twin_tol = twin_tol_pct
@@ -100,6 +138,11 @@ class ReversalDetector:
         self._min_pre_trend = float(min_pre_trend_pct)
         self._require_body = bool(require_swing_body)
         self._min_body_ratio = float(min_body_ratio)
+        self._require_rsi_div = bool(require_rsi_divergence)
+        self._min_rsi_div_pts = float(min_rsi_divergence_points)
+        self._require_vol_conf = bool(require_volume_confirmation)
+        self._require_vwap = bool(require_vwap_alignment)
+        self._vwap_period = int(vwap_period)
 
     # ------------------------------------------------------------------
     # Helpers qualite
@@ -214,7 +257,7 @@ class ReversalDetector:
         last_idx = n - 1
         start_window = max(0, last_idx - self._window)
 
-        # Filtre prominence ATR sur les swings (vire les micro-swings noise)
+        # Filtre prominence ATR sur les swings
         atr_val = self._get_atr(ohlcv)
         all_recent = sorted(
             [s for s in swings if start_window <= s.index <= last_idx],
@@ -222,17 +265,39 @@ class ReversalDetector:
         )
         recent = [s for s in all_recent if self._swing_is_prominent(ohlcv, s, atr_val)]
 
+        # Pre-calcule RSI/VWAP/Volume_SMA pour toutes les detections (cout amorti)
+        rsi_arr = None
+        vwap_arr = None
+        vol_arr = None
+        last_vwap = float("nan")
+        if self._require_rsi_div or self._require_vol_conf or self._require_vwap:
+            try:
+                rsi_arr = compute_rsi(ohlcv["close"], period=14)
+                if self._require_vwap:
+                    vwap_arr = compute_vwap_rolling(ohlcv, period=self._vwap_period)
+                    last_vwap = float(vwap_arr[-1]) if len(vwap_arr) else float("nan")
+                if self._require_vol_conf:
+                    vol_arr = ohlcv["volume"].to_numpy(dtype=float)
+            except Exception:
+                pass
+
+        ctx = _IndicatorContext(
+            rsi=rsi_arr, vwap=vwap_arr, volumes=vol_arr,
+            last_vwap=last_vwap,
+        )
+
         out: list[ChartPatternDTO] = []
-        out.extend(self._detect_double_top(ohlcv, recent, symbol, timeframe))
-        out.extend(self._detect_double_bottom(ohlcv, recent, symbol, timeframe))
-        out.extend(self._detect_hs(ohlcv, recent, symbol, timeframe))
-        out.extend(self._detect_ihs(ohlcv, recent, symbol, timeframe))
+        out.extend(self._detect_double_top(ohlcv, recent, symbol, timeframe, ctx))
+        out.extend(self._detect_double_bottom(ohlcv, recent, symbol, timeframe, ctx))
+        out.extend(self._detect_hs(ohlcv, recent, symbol, timeframe, ctx))
+        out.extend(self._detect_ihs(ohlcv, recent, symbol, timeframe, ctx))
         return out
 
     # ------------------------------------------------------------------
     # Double top (bearish reversal)
     # ------------------------------------------------------------------
-    def _detect_double_top(self, ohlcv, swings, symbol, timeframe) -> list[ChartPatternDTO]:
+    def _detect_double_top(self, ohlcv, swings, symbol, timeframe,
+                            ctx: _IndicatorContext) -> list[ChartPatternDTO]:
         last_close = float(ohlcv["close"].iloc[-1])
         if last_close <= 0:
             return []
@@ -242,29 +307,46 @@ class ReversalDetector:
             return []
         h2 = highs[-1]
         h1 = highs[-2]
-        # 1. Espacement temporel minimum
+        # 1. Espacement temporel
         if not self._swings_well_spaced(h1, h2):
             return []
-        # 2. Twin tolerance (prix proches)
+        # 2. Twin tolerance
         avg = (h1.price + h2.price) / 2.0
         if abs(h1.price - h2.price) / avg > self._twin_tol:
             return []
-        # 3. Pre-trend : doit y avoir un uptrend AVANT le 1er top
+        # 3. Pre-trend uptrend
         if not self._pre_trend_ok(ohlcv, h1.index, "up"):
             return []
-        # 4. Validite des sommets (body solide, pas un wick)
+        # 4. Validite des sommets
         if not self._swing_has_solid_body(ohlcv, h1):
             return []
         if not self._swing_has_solid_body(ohlcv, h2):
             return []
-        # 5. Neckline geometry
+        # 5. RSI divergence bearish : RSI sur top2 < RSI sur top1
+        rsi_div = False
+        if self._require_rsi_div and ctx.rsi is not None:
+            if not bearish_rsi_div_on_tops(ctx.rsi, h1.index, h2.index,
+                                            min_rsi_drop=self._min_rsi_div_pts):
+                return []
+            rsi_div = True
+        # 6. Volume exhaustion : volume sur top2 < volume sur top1
+        vol_conf = False
+        if self._require_vol_conf and ctx.volumes is not None:
+            if not volume_exhaustion_on_tops(ctx.volumes, h1.index, h2.index):
+                return []
+            vol_conf = True
+        # 7. VWAP : prix sous VWAP confirme la pression vendeuse (optionnel)
+        vwap_ok = True
+        if self._require_vwap and not np.isnan(ctx.last_vwap):
+            if not price_below_vwap(last_close, ctx.last_vwap, threshold_pct=0.0):
+                return []
+        # 8. Neckline geometry
         between_lows = [s for s in swings if s.kind == SwingKind.LOW and h1.index < s.index < h2.index]
         if not between_lows:
             return []
         neckline = min(between_lows, key=lambda s: s.price)
         if (avg - neckline.price) / avg < self._min_neck:
             return []
-        # Pattern non encore cassé
         if last_close < neckline.price * (1.0 - self._neck_buf):
             return []
         if last_close > avg * (1.0 + self._twin_tol):
@@ -295,13 +377,16 @@ class ReversalDetector:
                 "neckline_price": neckline.price,
                 "neckline_index": neckline.index,
                 "pre_trend_validated": True,
+                "rsi_divergence": rsi_div,
+                "volume_exhaustion": vol_conf,
             },
         )]
 
     # ------------------------------------------------------------------
     # Double bottom (bullish reversal)
     # ------------------------------------------------------------------
-    def _detect_double_bottom(self, ohlcv, swings, symbol, timeframe) -> list[ChartPatternDTO]:
+    def _detect_double_bottom(self, ohlcv, swings, symbol, timeframe,
+                               ctx: _IndicatorContext) -> list[ChartPatternDTO]:
         last_close = float(ohlcv["close"].iloc[-1])
         if last_close <= 0:
             return []
@@ -311,22 +396,35 @@ class ReversalDetector:
             return []
         l2 = lows[-1]
         l1 = lows[-2]
-        # 1. Espacement temporel minimum
         if not self._swings_well_spaced(l1, l2):
             return []
-        # 2. Twin tolerance
         avg = (l1.price + l2.price) / 2.0
         if abs(l1.price - l2.price) / avg > self._twin_tol:
             return []
-        # 3. Pre-trend : doit y avoir un downtrend AVANT le 1er bottom
         if not self._pre_trend_ok(ohlcv, l1.index, "down"):
             return []
-        # 4. Validite des creux
         if not self._swing_has_solid_body(ohlcv, l1):
             return []
         if not self._swing_has_solid_body(ohlcv, l2):
             return []
-        # 5. Neckline
+        # 5. RSI divergence bullish : RSI sur bot2 > RSI sur bot1
+        rsi_div = False
+        if self._require_rsi_div and ctx.rsi is not None:
+            if not bullish_rsi_div_on_bottoms(ctx.rsi, l1.index, l2.index,
+                                                min_rsi_rise=self._min_rsi_div_pts):
+                return []
+            rsi_div = True
+        # 6. Volume accumulation : volume sur bot2 > volume sur bot1
+        vol_conf = False
+        if self._require_vol_conf and ctx.volumes is not None:
+            if not volume_accumulation_on_bottoms(ctx.volumes, l1.index, l2.index):
+                return []
+            vol_conf = True
+        # 7. VWAP : prix au-dessus VWAP confirme pression acheteuse
+        if self._require_vwap and not np.isnan(ctx.last_vwap):
+            if not price_above_vwap(last_close, ctx.last_vwap):
+                return []
+        # 8. Neckline
         between_highs = [s for s in swings if s.kind == SwingKind.HIGH and l1.index < s.index < l2.index]
         if not between_highs:
             return []
@@ -362,13 +460,16 @@ class ReversalDetector:
                 "neckline_price": neckline.price,
                 "neckline_index": neckline.index,
                 "pre_trend_validated": True,
+                "rsi_divergence": rsi_div,
+                "volume_accumulation": vol_conf,
             },
         )]
 
     # ------------------------------------------------------------------
     # Head & Shoulders (bearish)
     # ------------------------------------------------------------------
-    def _detect_hs(self, ohlcv, swings, symbol, timeframe) -> list[ChartPatternDTO]:
+    def _detect_hs(self, ohlcv, swings, symbol, timeframe,
+                    ctx: _IndicatorContext) -> list[ChartPatternDTO]:
         last_close = float(ohlcv["close"].iloc[-1])
         if last_close <= 0:
             return []
@@ -399,6 +500,23 @@ class ReversalDetector:
             return []
         if not self._swing_has_solid_body(ohlcv, rs):
             return []
+        # RSI divergence : RSI sur head doit etre < RSI sur left shoulder (force qui s'epuise)
+        rsi_div = False
+        if self._require_rsi_div and ctx.rsi is not None:
+            if not bearish_rsi_div_on_tops(ctx.rsi, ls.index, head.index,
+                                            min_rsi_drop=self._min_rsi_div_pts):
+                return []
+            rsi_div = True
+        # Volume exhaustion : vol sur right shoulder < vol sur left shoulder
+        vol_conf = False
+        if self._require_vol_conf and ctx.volumes is not None:
+            if not volume_exhaustion_on_tops(ctx.volumes, ls.index, rs.index):
+                return []
+            vol_conf = True
+        # VWAP optionnel
+        if self._require_vwap and not np.isnan(ctx.last_vwap):
+            if not price_below_vwap(float(ohlcv["close"].iloc[-1]), ctx.last_vwap):
+                return []
         # Neckline
         neck_lows = [
             s for s in swings
@@ -445,13 +563,16 @@ class ReversalDetector:
                 "right_shoulder": (rs.index, rs.price),
                 "neckline_left": (nl1.index, nl1.price),
                 "neckline_right": (nl2.index, nl2.price),
+                "rsi_divergence": rsi_div,
+                "volume_exhaustion": vol_conf,
             },
         )]
 
     # ------------------------------------------------------------------
     # Inverse H&S (bullish)
     # ------------------------------------------------------------------
-    def _detect_ihs(self, ohlcv, swings, symbol, timeframe) -> list[ChartPatternDTO]:
+    def _detect_ihs(self, ohlcv, swings, symbol, timeframe,
+                     ctx: _IndicatorContext) -> list[ChartPatternDTO]:
         last_close = float(ohlcv["close"].iloc[-1])
         if last_close <= 0:
             return []
@@ -478,6 +599,23 @@ class ReversalDetector:
             return []
         if not self._swing_has_solid_body(ohlcv, rs):
             return []
+        # RSI divergence bullish : RSI[head] > RSI[left_shoulder] (faiblesse qui se renverse)
+        rsi_div = False
+        if self._require_rsi_div and ctx.rsi is not None:
+            if not bullish_rsi_div_on_bottoms(ctx.rsi, ls.index, head.index,
+                                                min_rsi_rise=self._min_rsi_div_pts):
+                return []
+            rsi_div = True
+        # Volume accumulation
+        vol_conf = False
+        if self._require_vol_conf and ctx.volumes is not None:
+            if not volume_accumulation_on_bottoms(ctx.volumes, ls.index, rs.index):
+                return []
+            vol_conf = True
+        # VWAP
+        if self._require_vwap and not np.isnan(ctx.last_vwap):
+            if not price_above_vwap(float(ohlcv["close"].iloc[-1]), ctx.last_vwap):
+                return []
         neck_highs = [
             s for s in swings
             if s.kind == SwingKind.HIGH and ls.index < s.index < rs.index
@@ -523,6 +661,8 @@ class ReversalDetector:
                 "right_shoulder": (rs.index, rs.price),
                 "neckline_left": (nh1.index, nh1.price),
                 "neckline_right": (nh2.index, nh2.price),
+                "rsi_divergence": rsi_div,
+                "volume_accumulation": vol_conf,
             },
         )]
 
