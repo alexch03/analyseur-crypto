@@ -48,6 +48,17 @@ SYMBOLS_FULL = [
 ]
 SYMBOLS_QUICK = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT"]
 
+
+def resolve_universe(name: str) -> list[str]:
+    """Selectionne l'univers : "10" / "4" / nom universe (50/100/200/bitget_...)"""
+    if name == "10":
+        return SYMBOLS_FULL
+    if name == "4":
+        return SYMBOLS_QUICK
+    from app.universe import get_universe
+    u = get_universe(name)
+    return u if u else SYMBOLS_FULL
+
 # Bars par jour pour les TF supportes
 BARS_PER_DAY_MAP = {
     "1m": 60 * 24,    # 1440 bougies/jour - plus precis
@@ -418,7 +429,12 @@ async def main(args) -> None:
     from app.logging_setup import setup_logging
     setup_logging(level_console=logging.WARNING, disable_file=True)
 
-    symbols = SYMBOLS_QUICK if args.quick else SYMBOLS_FULL
+    if args.universe:
+        symbols = resolve_universe(args.universe)
+    elif args.quick:
+        symbols = SYMBOLS_QUICK
+    else:
+        symbols = SYMBOLS_FULL
     if args.tf not in BARS_PER_DAY_MAP:
         print(f"TF {args.tf} non supporte. Choix: {list(BARS_PER_DAY_MAP.keys())}")
         return
@@ -623,6 +639,8 @@ def parse_args():
                    help="Seulement 4 symboles (BTC/ETH/SOL/XRP) — plus rapide")
     p.add_argument("--tf", default="15m", choices=["1m", "5m", "15m", "1h", "4h"],
                    help="Timeframe pour le scan (defaut: 15m, 1m = plus precis)")
+    p.add_argument("--universe", default=None,
+                   help="Univers (4, 10, 50, 100, 200, bitget_futures_top100, bitget_futures_top200, ...)")
     return p.parse_args()
 
 
