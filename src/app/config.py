@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     scan_symbols: list[str] = []
     scan_timeframes: list[str] = []
     scan_interval_seconds: int = 60
+    # Univers : "50" (defaut), "100" (top 100 majors+alts) ou "200" (ultra-large).
+    # Si scan_symbols est defini, ce parametre est ignore.
+    scan_universe: str = "50"
+    # Throttle entre paires (ms). Baisser pour scanner plus vite (attention rate limit).
+    scan_pair_delay_ms: int = 100
     # Filtres de qualite (engine d'hypothese). Defaults = pas de filtre.
     # Active-les via .env pour rendre le bot selectif :
     #   MIN_CONFLUENCE_SCORE=0.55   # ne garde que les setups >= 0.55
@@ -45,8 +50,10 @@ class Settings(BaseSettings):
     telegram_chat_id: str = ""
 
     def effective_scan_symbols(self) -> list[str]:
-        from app.universe import DEFAULT_UNIVERSE_50
-        return list(self.scan_symbols) if self.scan_symbols else list(DEFAULT_UNIVERSE_50)
+        if self.scan_symbols:
+            return list(self.scan_symbols)
+        from app.universe import get_universe
+        return list(get_universe(self.scan_universe))
 
     def effective_scan_timeframes(self) -> list[str]:
         from app.universe import DEFAULT_SCAN_TIMEFRAMES

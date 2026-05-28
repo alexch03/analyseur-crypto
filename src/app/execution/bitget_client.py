@@ -27,18 +27,50 @@ def _normalize_futures_symbol(symbol: str) -> str:
     return f"{symbol}:USDT"
 
 
+def _read_bitget_creds(demo: bool) -> tuple[str, str, str]:
+    """Lit les credentials Bitget depuis .env, supporte 2 conventions :
+
+    Format 1 (user) :
+      Live : BITGET_API_KEY, BITGET_SECRET_KEY, BITGET_PASSPHRASE
+      Demo : BITGET_API_KEY_demo, BITGET_SECRET_KEY_demo, BITGET_PASSPHRASE_demo
+    Format 2 (initial) :
+      Live : BITGET_LIVE_API_KEY, BITGET_LIVE_SECRET, BITGET_LIVE_PASSPHRASE
+      Demo : BITGET_DEMO_API_KEY, BITGET_DEMO_SECRET, BITGET_DEMO_PASSPHRASE
+    """
+    if demo:
+        # User format prioritaire
+        api = os.environ.get("BITGET_API_KEY_demo") or os.environ.get("BITGET_DEMO_API_KEY", "")
+        sec = (
+            os.environ.get("BITGET_SECRET_KEY_demo")
+            or os.environ.get("BITGET_DEMO_SECRET")
+            or os.environ.get("BITGET_DEMO_SECRET_KEY", "")
+        )
+        pwd = os.environ.get("BITGET_PASSPHRASE_demo") or os.environ.get("BITGET_DEMO_PASSPHRASE", "")
+    else:
+        api = os.environ.get("BITGET_API_KEY") or os.environ.get("BITGET_LIVE_API_KEY", "")
+        sec = (
+            os.environ.get("BITGET_SECRET_KEY")
+            or os.environ.get("BITGET_LIVE_SECRET")
+            or os.environ.get("BITGET_LIVE_SECRET_KEY", "")
+        )
+        pwd = os.environ.get("BITGET_PASSPHRASE") or os.environ.get("BITGET_LIVE_PASSPHRASE", "")
+    return api, sec, pwd
+
+
 class BitgetClient:
     """Wrapper ccxt.bitget pour USDT-FUTURES."""
 
     def __init__(self, *, demo: bool = True) -> None:
         self._demo = demo
-        prefix = "BITGET_DEMO_" if demo else "BITGET_LIVE_"
-        api_key = os.environ.get(f"{prefix}API_KEY", "")
-        secret = os.environ.get(f"{prefix}SECRET", "")
-        passphrase = os.environ.get(f"{prefix}PASSPHRASE", "")
+        api_key, secret, passphrase = _read_bitget_creds(demo)
         if not (api_key and secret and passphrase):
+            mode_label = "demo" if demo else "live"
             raise RuntimeError(
-                f"Bitget credentials manquants : {prefix}API_KEY / SECRET / PASSPHRASE dans .env"
+                f"Bitget credentials {mode_label} manquants dans .env. "
+                f"Accepted env vars: "
+                f"BITGET_API_KEY{'_demo' if demo else ''} / "
+                f"BITGET_SECRET_KEY{'_demo' if demo else ''} / "
+                f"BITGET_PASSPHRASE{'_demo' if demo else ''}"
             )
         self._ex = ccxt_async.bitget({
             "apiKey": api_key,

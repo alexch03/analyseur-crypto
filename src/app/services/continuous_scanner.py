@@ -157,6 +157,9 @@ class ContinuousScanner:
         """Une passe complète sur toutes les paires."""
         ok = 0
         failed = 0
+        import time as _t
+        t_start = _t.monotonic()
+        delay_s = max(0.0, float(settings.scan_pair_delay_ms) / 1000.0)
         for symbol in self._plan.symbols:
             for tf in self._plan.timeframes:
                 try:
@@ -168,8 +171,13 @@ class ContinuousScanner:
                         "Scan failed for %s %s | error_type=%s | msg=%s",
                         symbol, tf, type(e).__name__, str(e)[:200],
                     )
-                await asyncio.sleep(0.1)   # douceur sur le rate-limit
-        logger.info("Cycle done: ok=%d failed=%d", ok, failed)
+                if delay_s > 0:
+                    await asyncio.sleep(delay_s)
+        elapsed = _t.monotonic() - t_start
+        logger.info("Cycle done: ok=%d failed=%d in %.1fs (%d pairs, delay=%dms)",
+                     ok, failed, elapsed,
+                     len(self._plan.symbols) * len(self._plan.timeframes),
+                     settings.scan_pair_delay_ms)
 
     async def scan_once(self) -> dict:
         """Une passe immédiate, retourne un résumé. Idempotent."""
