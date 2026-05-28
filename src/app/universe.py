@@ -69,14 +69,85 @@ DEFAULT_UNIVERSE_200 = list(dict.fromkeys(DEFAULT_UNIVERSE_200))
 DEFAULT_SCAN_TIMEFRAMES: list[str] = ["15m", "1h", "4h"]
 
 
+def _load_bitget_symbols(market: str, key: str) -> list[str] | None:
+    """Charge une liste depuis data/bitget_symbols_{market}.json[key]."""
+    import json
+    from pathlib import Path
+    p = Path(__file__).resolve().parents[2] / "data" / f"bitget_symbols_{market}.json"
+    if not p.exists():
+        return None
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        return data.get(key) or None
+    except Exception:
+        return None
+
+
 def get_universe(name: str = "50") -> list[str]:
-    """Helper pour selectionner par nom : '50', '100', '200', ou liste libre."""
-    mapping = {
+    """Selecteur d'univers par nom.
+
+    Statique (hardcoded) :
+        "50"  : DEFAULT_UNIVERSE_50  (50 majors)
+        "100" : DEFAULT_UNIVERSE_100 (100 majors + alts)
+        "200" : DEFAULT_UNIVERSE_200 (198 unique)
+
+    Dynamique (depuis data/bitget_symbols_*.json fetcher) :
+        "bitget_spot_top50"      : top 50 spot par volume 24h
+        "bitget_spot_top100"     : top 100 spot
+        "bitget_spot_top200"     : top 200 spot
+        "bitget_spot_tier12"     : Tier 1+2 (volume > 10M$)
+        "bitget_spot_all"        : TOUS les USDT spot (~1000+)
+        "bitget_futures_top50"   : top 50 futures perpetual
+        "bitget_futures_top100"  : top 100 futures
+        "bitget_futures_top200"  : top 200 futures
+        "bitget_futures_tier12"  : Tier 1+2 futures
+        "bitget_futures_all"     : TOUS les USDT futures (~571)
+    """
+    name_str = str(name).lower()
+    # Statiques
+    static = {
         "50": DEFAULT_UNIVERSE_50,
         "100": DEFAULT_UNIVERSE_100,
         "200": DEFAULT_UNIVERSE_200,
     }
-    return mapping.get(str(name), DEFAULT_UNIVERSE_50)
+    if name_str in static:
+        return static[name_str]
+
+    # Dynamiques : "bitget_{market}_{tag}"
+    if name_str.startswith("bitget_"):
+        parts = name_str.split("_", 2)
+        if len(parts) == 3:
+            _, market, tag = parts  # ex: spot, top100
+            key_map = {
+                "top50": "symbols_top50",
+                "top100": "symbols_top100",
+                "top200": "symbols_top200",
+                "tier12": "tiered",
+                "all": "symbols_all",
+            }
+            json_key = key_map.get(tag)
+            if json_key == "tiered":
+                # tier12 = concat des 2 premiers tiers
+                from pathlib import Path
+                import json
+                p = (Path(__file__).resolve().parents[2]
+                     / "data" / f"bitget_symbols_{market}.json")
+                if p.exists():
+                    try:
+                        data = json.loads(p.read_text(encoding="utf-8"))
+                        tiers = data.get("tiered", {})
+                        return (tiers.get("tier1_high_volume", [])
+                                + tiers.get("tier2_medium_volume", []))
+                    except Exception:
+                        pass
+                return DEFAULT_UNIVERSE_50
+            if json_key:
+                loaded = _load_bitget_symbols(market, json_key)
+                if loaded:
+                    return loaded
+
+    # Fallback
+    return DEFAULT_UNIVERSE_50
 
 
 async def fetch_top_usdt_pairs(
