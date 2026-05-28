@@ -381,6 +381,57 @@ async def cmd_dashboard(update: Update, _ctx):
     await _reply(update, text)
 
 
+@auth_required
+async def cmd_exec_status(update: Update, _ctx):
+    """Status execution : mode, balance, positions ouvertes, safety."""
+    data = await _api_get("/execution/status")
+    if not data:
+        await _reply(update, "❌ API offline ou execution non configuree", back_kb())
+        return
+    bal = data.get("balance", {})
+    mode = data.get("mode", "?")
+    emoji = {"disabled": "⏸", "paper": "📝", "demo": "🟡", "live": "🔴"}.get(mode, "❔")
+    ks = "🛑 TRIPPED" if data.get("killswitch") else "✓ OK"
+    text = (
+        f"⚙️ *EXEC STATUS* — {emoji} `{mode}`\n\n"
+        f"Executor: `{data.get('executor', '?')}`\n"
+        f"Killswitch: {ks}\n"
+        f"Daily PnL: `{data.get('daily_pnl_usd', 0):+.2f}$` / "
+        f"max -{data.get('max_daily_loss_usd', 0):.0f}$\n"
+        f"Consec losses: `{data.get('consecutive_losses', 0)}`\n"
+        f"Open positions: `{data.get('open_positions_count', 0)}` / "
+        f"max {data.get('max_open_positions', 0)}\n"
+        f"Max position size: `{data.get('max_position_usd', 0):.0f}$`\n\n"
+        f"💰 Balance: `{bal.get('total', 0):.2f}$` "
+        f"(free `{bal.get('free', 0):.2f}$`)"
+    )
+    if data.get("killswitch_reason"):
+        text += f"\n\n*Killswitch reason:*\n`{data['killswitch_reason']}`"
+    await _reply(update, text, main_menu_kb())
+
+
+@auth_required
+async def cmd_emergency_stop(update: Update, _ctx):
+    """Ferme TOUTES les positions ET active killswitch (urgence)."""
+    text = "🚨 *EMERGENCY STOP*\n\nFermeture immediate de TOUTES les positions ?"
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("🚨 OUI - Tout fermer", callback_data="confirm:emergency"),
+        InlineKeyboardButton("❌ Annuler", callback_data="menu"),
+    ]])
+    await _reply(update, text, kb)
+
+
+@auth_required
+async def cmd_reset_killswitch(update: Update, _ctx):
+    """Reset le killswitch apres review humaine."""
+    data = await _api_post("/execution/reset_killswitch")
+    if data and data.get("ok"):
+        await _reply(update, f"✅ Killswitch RESET\n\n```\n{data.get('status', '')}\n```",
+                       main_menu_kb())
+    else:
+        await _reply(update, "❌ Reset failed (API offline ?)", back_kb())
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Callback handler
 # ─────────────────────────────────────────────────────────────────────────────
@@ -444,6 +495,20 @@ async def callback_handler(update: Update, _ctx: ContextTypes.DEFAULT_TYPE):
             "🔔 *Notifications*\n\nCliquer pour toggle :",
             reply_markup=notif_menu_kb(prefs), parse_mode=ParseMode.MARKDOWN,
         )
+    elif data == "confirm:emergency":
+        await q.edit_message_text("🚨 Fermeture en cours...", parse_mode=ParseMode.MARKDOWN)
+        res = await _api_post("/execution/emergency_stop")
+        if res and res.get("ok"):
+            n = len(res.get("closed", []))
+            await q.edit_message_text(
+                f"✅ *Emergency stop OK*\n\n{n} position(s) fermee(s)\nKillswitch TRIPPED.",
+                reply_markup=back_kb(), parse_mode=ParseMode.MARKDOWN,
+            )
+        else:
+            await q.edit_message_text(
+                f"❌ Emergency stop failed\n`{res}`",
+                reply_markup=back_kb(), parse_mode=ParseMode.MARKDOWN,
+            )
     elif data.startswith("notif_toggle:"):
         key = data.split(":", 1)[1]
         prefs = _load_prefs()
@@ -527,6 +592,10 @@ def main() -> int:
     app.add_handler(CommandHandler("notif", cmd_notif))
     app.add_handler(CommandHandler("test", cmd_test))
     app.add_handler(CommandHandler("dashboard", cmd_dashboard))
+    app.add_handler(CommandHandler("exec", cmd_exec_status))
+    app.add_handler(CommandHandler("emergency_stop", cmd_emergency_stop))
+    app.add_handler(CommandHandler("emergency", cmd_emergency_stop))
+    app.add_handler(CommandHandler("reset_killswitch", cmd_reset_killswitch))
 
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_error_handler(error_handler)

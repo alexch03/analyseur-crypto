@@ -46,6 +46,7 @@ def create_app() -> FastAPI:
     from app.api.router_hypotheses import router as hypotheses_router
     from app.api.router_admin import router as admin_router
     from app.api.router_analytics import router as analytics_router
+    from app.api.router_execution import router as execution_router
     from app.api.router_ingestion import router as ingestion_router
     from app.api.router_scan import router as scan_router
     from app.api.router_scanner_ops import router as scanner_ops_router
@@ -64,6 +65,7 @@ def create_app() -> FastAPI:
     app.include_router(unit_paper_router, prefix="/api/v1")
     app.include_router(scanner_ops_router, prefix="/api/v1")
     app.include_router(analytics_router, prefix="/api/v1")
+    app.include_router(execution_router, prefix="/api/v1")
     app.include_router(admin_router, prefix="/api/v1")
     app.include_router(dashboard_router)
 

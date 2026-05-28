@@ -75,12 +75,24 @@ def default_detectors() -> list[PatternDetector]:
 
 
 @dataclass
-class ScanPlan:
+class ExchangeTarget:
+    """Configuration d'un exchange data source (Binance, Bitget, etc.)."""
+    exchange_id: str               # "binance", "bitget"
     symbols: list[str]
+    timeframes: list[str]
+
+
+@dataclass
+class ScanPlan:
+    """Plan de scan : 1 ou plusieurs exchanges, leurs symboles et TF."""
+    symbols: list[str]              # gardes pour retro-compat (mono-exchange)
     timeframes: list[str]
     interval_seconds: int = 60
     candles_per_fetch: int = 200
     detectors: list[PatternDetector] = field(default_factory=default_detectors)
+    # NEW : si exchange_targets est non vide, scanne CES exchanges en parallele.
+    # Sinon, retombe sur l'exchange unique de settings (binance par defaut).
+    exchange_targets: list[ExchangeTarget] = field(default_factory=list)
 
 
 @dataclass
@@ -338,33 +350,60 @@ class ContinuousScanner:
         for t in newly_opened + newly_closed:
             await insert_unit_trade(session, t, symbol_id=symbol_id, timeframe_id=timeframe_id)
 
-        # Notifications Telegram (silent fail si TG non configure)
+        # Notifications Telegram + Execution exchange (silent fail si non configure)
         try:
             from app.tg_bot.notifier import (
                 dispatch_hypothesis_triggered, dispatch_hypothesis_closed,
             )
+            from app.execution.router import get_executor
+            from app.execution.base import OrderRequest, CloseRequest
+            from app.schemas.domain import Side
+            import os
+
+            executor = await get_executor()
+            exec_mode = os.environ.get("EXECUTION_MODE", "disabled").lower()
+            size_usd = float(os.environ.get("MAX_POSITION_USD", "50"))
+
             for h in result.created + result.updated:
                 if not h.transitions:
                     continue
                 last_t = h.transitions[-1]
-                # Recent TRIGGERED transition (sur cette bougie)
+
+                # TRIGGERED : nouvel ordre + notif
                 if (last_t.to_state.value == "TRIGGERED"
                         and last_t.timestamp == h.triggered_at):
+                    entry = float(h.triggered_price or h.entry_price)
                     dispatch_hypothesis_triggered(
                         symbol=symbol, timeframe=tf,
                         pattern=h.pattern.kind.value, side=h.side.value,
-                        entry=float(h.triggered_price or h.entry_price),
-                        target=float(h.target_price),
+                        entry=entry, target=float(h.target_price),
                         invalidation=float(h.invalidation_price),
                         confluence_score=float(h.confluence_score),
                     )
+                    if exec_mode != "disabled":
+                        req = OrderRequest(
+                            hypothesis_id=h.id, symbol=symbol, side=h.side.value,
+                            entry_price=entry, target_price=float(h.target_price),
+                            invalidation_price=float(h.invalidation_price),
+                            size_usd=size_usd,
+                        )
+                        try:
+                            res = await executor.open_position(req)
+                            if res.ok:
+                                logger.info("[%s] OPEN OK %s %s @ %s",
+                                            executor.name, symbol, h.side.value, res.filled_price)
+                            else:
+                                logger.warning("[%s] OPEN REFUSED %s: %s",
+                                                executor.name, symbol, res.error)
+                        except Exception as exc:
+                            logger.exception("Executor open failed for %s", h.id)
+
                 # Close transition (TARGET_HIT / STOPPED / INVALIDATED / EXPIRED)
                 elif (last_t.to_state.value in ("TARGET_HIT", "STOPPED", "INVALIDATED", "EXPIRED")
                         and last_t.timestamp == h.closed_at):
                     exit_p = float(h.outcome_price or 0.0)
                     entry_p = float(h.triggered_price or h.entry_price)
                     if entry_p > 0 and exit_p > 0:
-                        from app.schemas.domain import Side
                         if h.side == Side.LONG:
                             pct = (exit_p / entry_p - 1.0) * 100
                         else:
@@ -377,8 +416,28 @@ class ContinuousScanner:
                         outcome=last_t.to_state.value,
                         entry=entry_p, exit_price=exit_p, pct_gain=pct,
                     )
+                    if exec_mode != "disabled" and h.triggered_at is not None:
+                        # Seulement si on a effectivement ouvert (triggered_at set)
+                        req = CloseRequest(
+                            hypothesis_id=h.id, symbol=symbol, side=h.side.value,
+                            reason=last_t.to_state.value,
+                        )
+                        try:
+                            res = await executor.close_position(req)
+                            if res.ok:
+                                logger.info("[%s] CLOSE OK %s reason=%s",
+                                            executor.name, symbol, last_t.to_state.value)
+                            # Enregistre PnL pour safety guard
+                            try:
+                                from app.execution.router import get_safety
+                                pnl_usd = pct / 100.0 * size_usd
+                                get_safety().record_close(pnl_usd=pnl_usd)
+                            except Exception:
+                                pass
+                        except Exception:
+                            logger.exception("Executor close failed for %s", h.id)
         except Exception as e:
-            logger.debug("Telegram notify skipped: %s", e)
+            logger.debug("Telegram/execution skipped: %s", e)
 
         await record_scan_run(
             session,
