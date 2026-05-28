@@ -27,6 +27,7 @@ from app.db.models import Exchange
 from app.db.session import async_session_factory
 from app.ingestion.ccxt_fetcher import CCXTFetcher
 from app.market_structure.swings import detect_swings
+from app.patterns._quality import QualityWrappedDetector
 from app.patterns.channels import ChannelDetector
 from app.patterns.flags import FlagDetector
 from app.patterns.interfaces import PatternDetector
@@ -54,13 +55,22 @@ _CODE_VERSION = "scanner.v2-tz-fix"
 
 
 def default_detectors() -> list[PatternDetector]:
+    """Detecteurs par defaut wrappes par QualityWrappedDetector.
+
+    Le wrapper applique :
+      - Pre-trend context (continuation: meme sens, reversal: sens oppose)
+      - RSI alignment (RSI > 50 pour breakout UP, < 50 pour DOWN)
+
+    Patterns reversal (DOUBLE_TOP/BOTTOM, H&S, IHS) ont leur propre validation
+    interne avancee (RSI div + volume + body), donc le wrapper les passe-through.
+    """
     return [
-        TriangleDetector(),
-        RectangleDetector(),
-        ChannelDetector(),
-        WedgeDetector(),
-        FlagDetector(),
-        ReversalDetector(),
+        QualityWrappedDetector(TriangleDetector()),
+        QualityWrappedDetector(RectangleDetector()),
+        QualityWrappedDetector(ChannelDetector()),
+        QualityWrappedDetector(WedgeDetector()),
+        QualityWrappedDetector(FlagDetector()),
+        QualityWrappedDetector(ReversalDetector()),
     ]
 
 

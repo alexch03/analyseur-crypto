@@ -131,6 +131,7 @@ async def _run_backfill(
     # Import apres le reload des modules
     from app.services.continuous_scanner import ContinuousScanner, ScanPlan
     from app.services.hypothesis_engine import HypothesisEngine, ConfluenceScorer
+    from app.patterns._quality import QualityWrappedDetector
     from app.patterns.channels import ChannelDetector
     from app.patterns.flags import FlagDetector
     from app.patterns.rectangles import RectangleDetector
@@ -172,7 +173,15 @@ async def _run_backfill(
         symbols=symbols,
         timeframes=[timeframe],
         candles_per_fetch=history_bars + 60,
-        detectors=[triangle, rectangle, channel, wedge, flag, reversal],
+        # Wrappe chaque detecteur pour appliquer pre-trend + RSI alignment
+        detectors=[
+            QualityWrappedDetector(triangle),
+            QualityWrappedDetector(rectangle),
+            QualityWrappedDetector(channel),
+            QualityWrappedDetector(wedge),
+            QualityWrappedDetector(flag),
+            QualityWrappedDetector(reversal),  # reversal a sa validation interne, skip
+        ],
     )
     scanner = ContinuousScanner(plan=plan)
     # Expiry adapte au TF : 40 bars = 10h en 15m mais 40min en 1m ! On scale.
