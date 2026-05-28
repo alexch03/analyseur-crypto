@@ -71,7 +71,7 @@
   <span class="muted">Scanner continu 50 cryptos × 15m / 1h / 4h</span>
   <span class="refresh-info" id="lastUpdate"></span>
   <span style="flex:1"></span>
-  <button onclick="scanNow()" id="btnScanNow" title="Lance immédiatement une passe sur tous les symbols">▶ Scan immédiat</button>
+  <button onclick="scanNow()" id="btnScanNow" title="Force un scan maintenant (uniquement si daemon non actif)">▶ Scan immédiat</button>
   <button onclick="openBackfill()" id="btnBackfill" title="Rejoue l'historique pour reconstruire les trades clôturés">↶ Backfill historique</button>
   <button onclick="optimizeFilters()" id="btnOptimize" title="Grid search : trouve la meilleure combinaison de filtres">⚙ Optimize</button>
   <button onclick="openSettings()" id="btnSettings" title="Configurer univers, mode trading, etc.">🛠 Settings</button>
@@ -431,8 +431,23 @@ async function scanNow() {
     const r = await fetch('/api/v1/scanner/scan-now', { method: 'POST' });
     const j = await r.json();
     _activeJobId = j.job_id;
-    showBanner(`⏳ Scan immédiat lancé (${j.job_id})…`, 'var(--accent)');
-    _jobPollTimer = setInterval(pollJob, 2000);
+    showBanner(`⏳ Scan demandé (${j.job_id})…`, 'var(--accent)');
+    // Poll un peu pour avoir la reponse (skipped si daemon actif)
+    setTimeout(async () => {
+      const r2 = await fetch('/api/v1/scanner/jobs/' + j.job_id);
+      const j2 = await r2.json();
+      if (j2.result && j2.result.skipped) {
+        showBanner(
+          `ℹ️ ${j2.result.message}`,
+          'var(--accent)'
+        );
+      } else if (j2.result) {
+        showBanner(`✅ Scan terminé (${j2.result.pairs_processed || 0} paires)`, 'var(--green)');
+      }
+      document.getElementById('btnScanNow').disabled = false;
+      document.getElementById('btnBackfill').disabled = false;
+      _activeJobId = null;
+    }, 1500);
   } catch (e) {
     showBanner('❌ Échec du lancement : ' + e, 'var(--red)');
     document.getElementById('btnScanNow').disabled = false;

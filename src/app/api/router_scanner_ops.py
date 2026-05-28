@@ -55,8 +55,50 @@ def _job_to_dict(j: _JobStatus) -> dict:
     }
 
 
+async def _daemon_is_active() -> tuple[bool, int]:
+    """Detecte si un scanner daemon tourne deja, via scan_runs recents.
+
+    Retourne (active, seconds_since_last). Si scan_run < scan_interval, le daemon
+    est actif et on ne doit pas en lancer un 2eme en parallele.
+    """
+    try:
+        from app.db.session import async_session_factory
+        from app.db.models import ScanRun
+        from sqlalchemy import select, func
+        async with async_session_factory() as session:
+            q = select(func.max(ScanRun.ts_finished))
+            last = (await session.execute(q)).scalar_one_or_none()
+            if last is None:
+                return False, 999999
+            # Normalize tz
+            from datetime import timezone
+            if last.tzinfo is None:
+                last = last.replace(tzinfo=timezone.utc)
+            now = datetime.now(tz=UTC)
+            elapsed = int((now - last).total_seconds())
+            # Si dernier scan < interval, daemon actif
+            return elapsed < int(settings.scan_interval_seconds * 2), elapsed
+    except Exception:
+        return False, 999999
+
+
 async def _run_scan_once(job: _JobStatus, symbols: list[str] | None, timeframes: list[str] | None) -> None:
     try:
+        # GARDE : si le daemon scanne deja, on n'en lance pas un 2eme (evite doublons)
+        active, elapsed = await _daemon_is_active()
+        if active:
+            interval = int(settings.scan_interval_seconds)
+            eta = max(0, interval - elapsed)
+            job.result = {
+                "skipped": True,
+                "reason": "scanner daemon deja actif",
+                "last_scan_seconds_ago": elapsed,
+                "next_cycle_eta_seconds": eta,
+                "message": f"Le scanner daemon tourne en boucle (cycle {interval}s). Prochain scan dans ~{eta}s.",
+            }
+            return
+
+        # Sinon (daemon non lance), on fait un vrai scan manuel
         plan = ScanPlan(
             symbols=symbols or settings.effective_scan_symbols(),
             timeframes=timeframes or settings.effective_scan_timeframes(),
