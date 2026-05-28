@@ -74,10 +74,20 @@
   <button onclick="scanNow()" id="btnScanNow" title="Lance immédiatement une passe sur tous les symbols">▶ Scan immédiat</button>
   <button onclick="openBackfill()" id="btnBackfill" title="Rejoue l'historique pour reconstruire les trades clôturés">↶ Backfill historique</button>
   <button onclick="optimizeFilters()" id="btnOptimize" title="Grid search : trouve la meilleure combinaison de filtres">⚙ Optimize</button>
+  <button onclick="openSettings()" id="btnSettings" title="Configurer univers, mode trading, etc.">🛠 Settings</button>
   <button onclick="cleanDb()" id="btnClean" style="background:#3a1a1a; color:#f85149; border-color:#5a2a2a;" title="Vide toutes les hypothèses et trades (conserve l'OHLCV)">🗑 Reset DB</button>
 </header>
 
 <div id="jobBanner" style="display:none; padding:8px 20px; background:#1c2128; border-bottom:1px solid var(--border); font-size:12px;"></div>
+
+<dialog id="settingsDialog" style="background:var(--panel); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:20px; min-width:560px; max-width:760px;">
+  <h3 style="margin-top:0">🛠 Settings</h3>
+  <div id="settingsContent" style="font-size:13px;">Loading...</div>
+  <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:16px;">
+    <button onclick="document.getElementById('settingsDialog').close()">Fermer</button>
+    <button onclick="refreshBitgetSymbols()" style="background:#1c2128;">↻ Refresh Bitget symbols</button>
+  </div>
+</dialog>
 
 <dialog id="backfillDialog" style="background:var(--panel); color:var(--text); border:1px solid var(--border); border-radius:8px; padding:20px; min-width:380px;">
   <h3 style="margin-top:0">Backfill historique</h3>
@@ -461,6 +471,163 @@ document.getElementById('filterSymbol').addEventListener('input', () => {
   clearTimeout(window._symT);
   window._symT = setTimeout(loadHypotheses, 350);
 });
+
+// ─────────────────────────────────────────────────────────────
+// SETTINGS panel
+// ─────────────────────────────────────────────────────────────
+async function openSettings() {
+  const dlg = document.getElementById('settingsDialog');
+  const content = document.getElementById('settingsContent');
+  content.innerHTML = 'Chargement...';
+  dlg.showModal();
+  await loadSettings();
+}
+
+async function loadSettings() {
+  try {
+    const [s, u, e] = await Promise.all([
+      fetch('/api/v1/settings').then(r => r.json()),
+      fetch('/api/v1/settings/universes').then(r => r.json()),
+      fetch('/api/v1/execution/status').then(r => r.json()).catch(() => null),
+    ]);
+    renderSettings(s, u, e);
+  } catch (err) {
+    document.getElementById('settingsContent').innerHTML =
+      '<div style="color:#f85149">Erreur: ' + err.message + '</div>';
+  }
+}
+
+function renderSettings(s, u, exec) {
+  const universeOptions = u.items.map(it =>
+    `<option value="${it.name}" ${it.name === s.scan.universe ? 'selected' : ''}>${it.name} (${it.count} symbols)</option>`
+  ).join('');
+  const modeOptions = ['disabled', 'paper', 'demo', 'live'].map(m =>
+    `<option value="${m}" ${m === s.execution.mode ? 'selected' : ''}>${m.toUpperCase()}</option>`
+  ).join('');
+  const demoSyms = s.execution.demo_symbols.join(',');
+  const ksTag = exec && exec.killswitch
+    ? '<span class="badge neg">KILLSWITCH TRIPPED</span>'
+    : '<span class="badge pos">OK</span>';
+  const html = `
+    <div style="display:grid; gap:14px;">
+
+      <div style="padding:10px; background:#1c2128; border:1px solid var(--border); border-radius:6px;">
+        <b>📡 Univers de scan</b>
+        <p style="color:var(--muted); font-size:11px; margin:4px 0 8px;">
+          Choix de la liste de symbols à scanner. Statique (hardcoded) ou dynamique depuis Bitget tickers.
+        </p>
+        <select id="setUniverse" style="width:100%; padding:6px;">
+          ${universeOptions}
+        </select>
+        <button onclick="saveUniverse()" style="margin-top:6px">💾 Save (redemarre scanner)</button>
+      </div>
+
+      <div style="padding:10px; background:#1c2128; border:1px solid var(--border); border-radius:6px;">
+        <b>⚡ Mode execution</b>
+        <p style="color:var(--muted); font-size:11px; margin:4px 0 8px;">
+          • <code>disabled</code> = scan only, pas d'ordres &nbsp;
+          • <code>paper</code> = DB tracking only &nbsp;
+          • <code>demo</code> = ordres Bitget testnet &nbsp;
+          • <code>live</code> = VRAI ARGENT
+        </p>
+        <div style="display:flex; gap:8px;">
+          <select id="setMode" style="flex:1; padding:6px;">${modeOptions}</select>
+          <button onclick="saveMode()">💾 Save</button>
+        </div>
+        <div style="margin-top:8px; font-size:11px; color:var(--muted);">
+          Status killswitch : ${ksTag}
+          ${exec ? `&nbsp;|&nbsp; Daily PnL: <b>${fmt(exec.daily_pnl_usd, 2)}$</b>` : ''}
+          ${exec ? `&nbsp;|&nbsp; Balance: <b>${exec.balance && exec.balance.total ? fmt(exec.balance.total, 2) + '$' : 'n/a'}</b>` : ''}
+        </div>
+      </div>
+
+      <div style="padding:10px; background:#1c2128; border:1px solid var(--border); border-radius:6px;">
+        <b>🎯 Demo symbols whitelist</b>
+        <p style="color:var(--muted); font-size:11px; margin:4px 0 8px;">
+          Si rempli, SEULS ces symbols passent ordre exchange (en demo/live).<br>
+          Paper tracking continue pour TOUS via la DB. CSV: <code>BTC/USDT,ETH/USDT,SOL/USDT</code>
+        </p>
+        <input id="setDemoSymbols" value="${demoSyms}" placeholder="(vide = tous autorises)" style="width:100%; padding:6px;">
+        <button onclick="saveDemoSymbols()" style="margin-top:6px">💾 Save</button>
+      </div>
+
+      <div style="padding:10px; background:#1c2128; border:1px solid var(--border); border-radius:6px;">
+        <b>⏱ Cycle interval</b>
+        <p style="color:var(--muted); font-size:11px; margin:4px 0 8px;">
+          Secondes entre cycles complets. 60s ok pour 50 symbols, 90s+ pour 100, 180s+ pour 200.
+        </p>
+        <div style="display:flex; gap:8px;">
+          <input id="setInterval" type="number" min="30" max="3600" value="${s.scan.interval_seconds}" style="flex:1; padding:6px;">
+          <button onclick="saveInterval()">💾 Save</button>
+        </div>
+      </div>
+
+      <div style="padding:10px; background:#1c2128; border:1px solid var(--border); border-radius:6px;">
+        <b>📋 Status</b>
+        <div style="font-size:11px; color:var(--muted); display:grid; gap:4px; margin-top:4px;">
+          <div>Univers actuel : <b style="color:var(--text)">${s.scan.universe}</b> (${s.scan.universe_size} symbols)</div>
+          <div>Timeframes : <b style="color:var(--text)">${s.scan.timeframes.join(', ')}</b></div>
+          <div>Mode trading : <b style="color:var(--text)">${s.execution.mode}</b> &nbsp;|&nbsp; Leverage : <b style="color:var(--text)">${s.execution.leverage}x</b></div>
+          <div>Max position : <b style="color:var(--text)">${fmt(s.execution.max_position_usd, 0)}$</b> &nbsp;|&nbsp; Max daily loss : <b style="color:var(--text)">${fmt(s.execution.max_daily_loss_usd, 0)}$</b></div>
+          <div>Demo whitelist : <b style="color:var(--text)">${s.execution.demo_symbols.length ? s.execution.demo_symbols.length + ' symbols' : 'tous'}</b></div>
+          <div>Bitget Demo : ${s.bitget_demo_configured ? '✅' : '❌'} &nbsp;|&nbsp; Bitget Live : ${s.bitget_live_configured ? '✅' : '❌'} &nbsp;|&nbsp; Telegram : ${s.telegram_configured ? '✅' : '❌'}</div>
+        </div>
+      </div>
+
+    </div>
+  `;
+  document.getElementById('settingsContent').innerHTML = html;
+}
+
+async function saveUniverse() {
+  const v = document.getElementById('setUniverse').value;
+  const r = await fetch('/api/v1/settings/universe?name=' + encodeURIComponent(v), { method: 'POST' });
+  const d = await r.json();
+  if (d.ok) {
+    alert('✅ Univers : ' + v + '\n' + d.note);
+    loadSettings();
+  } else {
+    alert('❌ ' + JSON.stringify(d));
+  }
+}
+
+async function saveMode() {
+  const v = document.getElementById('setMode').value;
+  if (v === 'live') {
+    if (!confirm('⚠️ MODE LIVE = VRAI ARGENT.\nTu confirmes ? (tu peux toujours emergency stop via /api/v1/execution/emergency_stop)')) return;
+  }
+  const r = await fetch('/api/v1/settings/execution?mode=' + v, { method: 'POST' });
+  const d = await r.json();
+  if (d.ok) {
+    alert('✅ Execution mode : ' + v);
+    loadSettings();
+  }
+}
+
+async function saveDemoSymbols() {
+  const v = document.getElementById('setDemoSymbols').value;
+  const r = await fetch('/api/v1/settings/demo_symbols?symbols=' + encodeURIComponent(v), { method: 'POST' });
+  const d = await r.json();
+  if (d.ok) {
+    alert('✅ Demo whitelist : ' + (d.count ? d.count + ' symbols' : 'tous autorises'));
+    loadSettings();
+  }
+}
+
+async function saveInterval() {
+  const v = parseInt(document.getElementById('setInterval').value);
+  const r = await fetch('/api/v1/settings/scan_interval?seconds=' + v, { method: 'POST' });
+  const d = await r.json();
+  if (d.ok) alert('✅ Interval : ' + v + 's');
+}
+
+async function refreshBitgetSymbols() {
+  if (!confirm('Refresh la liste des symbols Bitget (peut prendre 30-60s) ?')) return;
+  const r = await fetch('/api/v1/settings/refresh_bitget?market=futures', { method: 'POST' });
+  const d = await r.json();
+  alert(d.ok ? '✅ Symbols refreshed\n' + (d.stdout_tail || []).slice(-3).join('\n') : '❌ Failed');
+  loadSettings();
+}
 
 loadAll();
 setInterval(loadAll, 30_000);

@@ -33,6 +33,7 @@ class SafetyConfig:
     max_daily_loss_usd: float = 200.0    # killswitch pertes du jour
     max_consecutive_losses: int = 5      # killswitch losses consecutives
     blacklist_symbols: list[str] = field(default_factory=list)
+    whitelist_symbols: list[str] = field(default_factory=list)  # si non vide, SEULS ces symbols sont autorises
     allowed_sides: tuple[str, ...] = ("LONG", "SHORT")  # ("LONG",) pour spot-only
     min_balance_usd: float = 10.0        # n'ouvre pas si balance < min
 
@@ -124,6 +125,10 @@ class SafetyGuard:
 
         if symbol in self._cfg.blacklist_symbols:
             return False, f"symbol {symbol} in blacklist"
+
+        # Whitelist : si non vide, SEULS ces symbols passent (autres = paper only)
+        if self._cfg.whitelist_symbols and symbol not in self._cfg.whitelist_symbols:
+            return False, f"symbol {symbol} not in demo whitelist ({len(self._cfg.whitelist_symbols)} symbols)"
 
         if size_usd <= 0:
             return False, "size_usd must be > 0"

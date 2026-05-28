@@ -24,6 +24,12 @@ _safety_singleton: SafetyGuard | None = None
 
 
 def _build_safety_from_env() -> SafetyGuard:
+    # DEMO_SYMBOLS sert de whitelist : si configure, seuls ces symbols
+    # passent l'ordre exchange (paper continue pour TOUS via DB).
+    whitelist = [
+        s.strip() for s in os.environ.get("DEMO_SYMBOLS", "").split(",")
+        if s.strip()
+    ]
     cfg = SafetyConfig(
         mode=os.environ.get("EXECUTION_MODE", "disabled").lower(),
         max_position_usd=float(os.environ.get("MAX_POSITION_USD", "50")),
@@ -34,6 +40,7 @@ def _build_safety_from_env() -> SafetyGuard:
             s.strip() for s in os.environ.get("BLACKLIST_SYMBOLS", "").split(",")
             if s.strip()
         ],
+        whitelist_symbols=whitelist,
         min_balance_usd=float(os.environ.get("MIN_BALANCE_USD", "10")),
     )
     return SafetyGuard(cfg)
