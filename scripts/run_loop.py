@@ -31,6 +31,13 @@ from statistics import mean, median
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+# Force UTF-8 sur stdout/stderr Windows
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
 # ============================================================
 # Configuration
 # ============================================================
@@ -109,6 +116,8 @@ async def _run_backfill(
     require_volume: bool = False,
     breakeven_pct: float = 0.0,
     min_rr: float = 0.0,
+    excluded_patterns: list[str] | None = None,
+    reject_volume_weak: bool = False,
 ) -> dict:
     # Import apres le reload des modules
     from app.services.continuous_scanner import ContinuousScanner, ScanPlan
@@ -125,8 +134,10 @@ async def _run_backfill(
         min_confluence_score=min_conf,
         reject_trend_counter=reject_counter,
         require_volume_expansion=require_volume,
+        require_volume_weak_reject=reject_volume_weak,
         breakeven_trigger_pct=breakeven_pct,
         min_rr_ratio=min_rr,
+        excluded_patterns=tuple(excluded_patterns or ()),
     )
     try:
         result = await scanner.backfill(
@@ -344,7 +355,7 @@ def _seg(s: dict) -> str:
 
 async def main(args) -> None:
     from app.logging_setup import setup_logging
-    setup_logging(level_console=logging.WARNING)
+    setup_logging(level_console=logging.WARNING, disable_file=True)
 
     symbols = SYMBOLS_QUICK if args.quick else SYMBOLS_FULL
     history_bars = args.days * BARS_PER_DAY
@@ -354,13 +365,23 @@ async def main(args) -> None:
     print(f"  {history_bars} bougies | {args.iterations} iteration(s)")
     print("=" * 72)
 
-    # Config courante (s'ameliore a chaque iteration)
+    # Config initiale = defaults de l'engine (BE 0.3 active, trend_counter rejete)
+    # Pour partir d'un baseline RAW (zero filtre), mettre tout a 0.
+    from app.services.hypothesis_engine import (
+        _DEFAULT_BREAKEVEN_TRIGGER_PCT,
+        _DEFAULT_MIN_CONFLUENCE,
+        _DEFAULT_MIN_RR,
+        _DEFAULT_REJECT_TREND_COUNTER,
+        _DEFAULT_REQUIRE_VOLUME,
+    )
     cur_cfg: dict = {
-        "min_conf": 0.0,
-        "reject_counter": False,
-        "require_volume": False,
-        "breakeven_pct": 0.0,
-        "min_rr": 0.0,
+        "min_conf": _DEFAULT_MIN_CONFLUENCE,
+        "reject_counter": _DEFAULT_REJECT_TREND_COUNTER,
+        "require_volume": _DEFAULT_REQUIRE_VOLUME,
+        "breakeven_pct": _DEFAULT_BREAKEVEN_TRIGGER_PCT,
+        "min_rr": _DEFAULT_MIN_RR,
+        "excluded_patterns": [],
+        "reject_volume_weak": False,
     }
 
     best_compound = -9999.0
@@ -371,13 +392,13 @@ async def main(args) -> None:
         db_name = f"loop_iter{it}.db"
         db_url = f"sqlite+aiosqlite:///./{db_name}"
 
-        print(f"\n{'─'*72}")
+        print(f"\n{'-'*72}")
         print(f"ITERATION {it}/{args.iterations}  →  {db_name}")
         print(f"  Config: score>={cur_cfg['min_conf']}  "
               f"reject_ctr={cur_cfg['reject_counter']}  "
               f"require_vol={cur_cfg['require_volume']}  "
               f"BE={cur_cfg['breakeven_pct']:.0%}")
-        print(f"{'─'*72}")
+        print(f"{'-'*72}")
 
         # A. Reset + backfill
         print(f"\n[A] Reset + backfill ({history_bars} bougies) ...")
@@ -413,15 +434,22 @@ async def main(args) -> None:
         if opt.get("top_configs"):
             best_virt = opt["top_configs"][0]
             cfg_v = best_virt["config"]
+            excluded = cfg_v.get("excluded_patterns", [])
             print(f"\n[C] Meilleure config virtuelle :")
             print(f"    score>={cfg_v['min_confluence_score']}  "
                   f"reject={cfg_v['reject_tags']}  require={cfg_v['required_tags']}")
+            if excluded:
+                print(f"    EXCLUDE patterns : {excluded}")
+            if opt.get("losing_patterns_detected"):
+                print(f"    Patterns perdants detectes : {opt['losing_patterns_detected']}")
             print(f"    Simul : {_seg(best_virt)}")
             new_cfg["min_conf"] = float(cfg_v["min_confluence_score"])
             new_cfg["reject_counter"] = "trend_counter" in cfg_v.get("reject_tags", [])
             new_cfg["require_volume"] = "volume_expansion" in cfg_v.get("required_tags", [])
+            new_cfg["reject_volume_weak"] = "volume_weak" in cfg_v.get("reject_tags", [])
+            new_cfg["excluded_patterns"] = list(excluded)
         else:
-            print(f"\n[C] Grid search : pas assez de trades (min 20)")
+            print(f"\n[C] Grid search : pas assez de trades (min 15)")
 
         # D. MFE/MAE
         print(f"\n[D] Analyse MFE/MAE ...")
@@ -431,8 +459,8 @@ async def main(args) -> None:
             if be > 0:
                 saves = mfe_reco.get("be_saves_pct", 0)
                 stopped = mfe_reco.get("stopped_count", 0)
-                print(f"    → BE@{be:.0%} : sauve {saves:.0f}% des {stopped} stops")
-                new_cfg["breakeven_pct"] = be
+                print(f"    INFO BE@{be:.0%} sauverait {saves:.0f}% des {stopped} stops (theorique)")
+                print(f"    NOTE: BE non auto-applique (peut convertir winners en BE-exits)")
             if mfe_reco.get("bad_patterns"):
                 print(f"    → Patterns perdants : {list(mfe_reco['bad_patterns'].keys())}")
             if mfe_reco.get("tight_sl_patterns"):

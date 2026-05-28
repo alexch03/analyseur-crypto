@@ -23,6 +23,13 @@ from statistics import mean, median
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+# UTF-8 stdout Windows
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
 _DB = os.environ.get("ANALYZE_DB", "analyseur_backtest.db")
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///./{_DB}"
 
@@ -313,7 +320,7 @@ def main():
         avg_mfe_st = mean(mfes)
         print(f"  MFE median STOPPED: {med_mfe:+.2f}%  avg: {avg_mfe_st:+.2f}%")
         if med_mfe > 0.3:
-            print(f"  → Profit fréquent avant le SL : BE~{med_mfe/2:.1f}% recommandé")
+            print(f"  -> Profit fréquent avant le SL : BE~{med_mfe/2:.1f}% recommandé")
     else:
         print("  Aucun STOPPED.")
 
@@ -329,9 +336,9 @@ def main():
         print(f"  Winners qui ont frôlé >80% du SL: {close_sl}/{len(targets)} "
               f"({close_sl/len(targets)*100:.0f}%)")
         if avg_mae_pct > 60:
-            print("  → SL trop SERRÉ : wicks tapent le stop, buffer ATR x 0.5 recommandé")
+            print("  -> SL trop SERRÉ : wicks tapent le stop, buffer ATR x 0.5 recommandé")
         elif avg_mae_pct < 25:
-            print("  → SL peut être resserré (peu de drawdown sur les winners)")
+            print("  -> SL peut être resserré (peu de drawdown sur les winners)")
     else:
         print("  Aucun TARGET_HIT.")
 
@@ -368,18 +375,18 @@ def main():
 
         verdicts: list[str] = []
         if avg_g < -0.5:
-            verdicts.append("PERDANT → filtrer ou changer entree")
+            verdicts.append("PERDANT -> filtrer ou changer entree")
         elif avg_g < 0:
-            verdicts.append("marginalement negatif → tuner")
+            verdicts.append("marginalement negatif -> tuner")
 
         if st and st_recovered_pct > 40:
             verdicts.append(f"BE@50% sauverait {st_recovered_pct:.0f}% des stops")
 
         if tg and tg_mae_pct > 65:
-            verdicts.append(f"SL trop serre (MAE={tg_mae_pct:.0f}%) → +buffer")
+            verdicts.append(f"SL trop serre (MAE={tg_mae_pct:.0f}%) -> +buffer")
 
         if avg_mfe_all < 0.2 and avg_g < 0:
-            verdicts.append("MFE faible → detection trop prematuree")
+            verdicts.append("MFE faible -> detection trop prematuree")
 
         if not verdicts:
             verdicts = ["OK ✓"]
@@ -399,7 +406,7 @@ def main():
             f"  {pat:<28} N={len(items):>4}  win={win_rate:>4.0f}%  "
             f"avg={avg_g:+5.2f}%  RR={rr:>4.2f}  "
             f"MFE={avg_mfe_all:+5.2f}%  MAE={avg_mae_all:+5.2f}%"
-            f"  →  {' | '.join(verdicts)}"
+            f"  ->  {' | '.join(verdicts)}"
         )
         reco_lines.append((avg_g, line))
 
@@ -432,7 +439,7 @@ def main():
         for p in sorted(bad_patterns):
             n = len(by_pattern[p])
             g = mean(a.pct_gain for a in by_pattern[p])
-            print(f"    {p}: N={n}, avg={g:+.2f}% → envisager DISABLE")
+            print(f"    {p}: N={n}, avg={g:+.2f}% -> envisager DISABLE")
 
 
 if __name__ == "__main__":

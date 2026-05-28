@@ -14,24 +14,29 @@ import logging.handlers
 from pathlib import Path
 
 
-def setup_logging(log_dir: str | Path = "logs", level_console: int = logging.INFO) -> None:
+def setup_logging(
+    log_dir: str | Path = "logs",
+    level_console: int = logging.INFO,
+    log_filename: str = "scanner.log",
+    disable_file: bool = False,
+) -> None:
     log_path = Path(log_dir)
     log_path.mkdir(parents=True, exist_ok=True)
-    log_file = log_path / "scanner.log"
+    log_file = log_path / log_filename
 
     root = logging.getLogger()
     # Evite la duplication si appele plusieurs fois
     for h in list(root.handlers):
         root.removeHandler(h)
 
-    root.setLevel(logging.DEBUG)
+    root.setLevel(logging.INFO)  # INFO root pour eviter le spam DEBUG aiosqlite
 
     fmt_short = logging.Formatter(
-        "%(asctime)s %(levelname)-5s %(name)s — %(message)s",
+        "%(asctime)s %(levelname)-5s %(name)s - %(message)s",
         datefmt="%H:%M:%S",
     )
     fmt_long = logging.Formatter(
-        "%(asctime)s %(levelname)-7s [%(process)d] %(name)s.%(funcName)s:%(lineno)d — %(message)s",
+        "%(asctime)s %(levelname)-7s [%(process)d] %(name)s.%(funcName)s:%(lineno)d - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
@@ -40,18 +45,27 @@ def setup_logging(log_dir: str | Path = "logs", level_console: int = logging.INF
     console.setFormatter(fmt_short)
     root.addHandler(console)
 
-    file_h = logging.handlers.RotatingFileHandler(
-        log_file, maxBytes=5_000_000, backupCount=3, encoding="utf-8"
-    )
-    file_h.setLevel(logging.DEBUG)
-    file_h.setFormatter(fmt_long)
-    root.addHandler(file_h)
+    if not disable_file:
+        try:
+            file_h = logging.handlers.RotatingFileHandler(
+                log_file, maxBytes=5_000_000, backupCount=3,
+                encoding="utf-8", delay=True,
+            )
+            file_h.setLevel(logging.INFO)
+            file_h.setFormatter(fmt_long)
+            root.addHandler(file_h)
+        except Exception as exc:
+            # Si log file verrouille par autre process : on passe (console only)
+            print(f"[logging] file handler indisponible ({exc}) - console only")
 
-    # Modules trop bavards : on calme.
-    logging.getLogger("ccxt").setLevel(logging.WARNING)
-    logging.getLogger("urllib3").setLevel(logging.WARNING)
-    logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
-    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+    # Modules trop bavards : on calme tout au-dessus de WARNING
+    for name in (
+        "ccxt", "ccxt.async_support", "urllib3", "asyncio",
+        "sqlalchemy", "sqlalchemy.engine", "sqlalchemy.pool",
+        "aiosqlite", "uvicorn", "uvicorn.access",
+    ):
+        logging.getLogger(name).setLevel(logging.WARNING)
 
     root.info("Logging initialise: console=%s, file=%s",
-              logging.getLevelName(level_console), log_file)
+              logging.getLevelName(level_console),
+              log_file if not disable_file else "(disabled)")

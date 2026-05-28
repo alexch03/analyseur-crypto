@@ -33,11 +33,16 @@ from app.schemas.patterns import (
 )
 
 _DEFAULT_WINDOW_BARS = 120
-_DEFAULT_TWIN_TOL_PCT = 0.02            # 2% écart max entre les 2 sommets/creux jumeaux
-_DEFAULT_SHOULDER_TOL_PCT = 0.04        # 4% pour les épaules H&S
-_DEFAULT_MIN_HEAD_PROMINENCE_PCT = 0.015  # head doit dépasser shoulders de >=1.5%
-_DEFAULT_MIN_NECK_DISTANCE_PCT = 0.015  # creux/sommet de neckline >=1.5% sous/au-dessus des sommets
-_DEFAULT_NECK_BUFFER_PCT = 0.002        # tolérance dépassement avant invalidation
+_DEFAULT_TWIN_TOL_PCT = 0.02            # garde permissif pour avoir un volume
+_DEFAULT_SHOULDER_TOL_PCT = 0.04
+_DEFAULT_MIN_HEAD_PROMINENCE_PCT = 0.015
+_DEFAULT_MIN_NECK_DISTANCE_PCT = 0.015  # 1.5% (original)
+_DEFAULT_NECK_BUFFER_PCT = 0.002
+# Optimisations issues de l'analyse MFE/MAE (run_loop, mai 2026) :
+# - Winners atteignent 121-138% du target initial -> target_multiplier=1.2 pour ameliorer RR
+# - SL legerement resserre pour ameliorer R:R sans tuer trigger rate
+_DEFAULT_TARGET_MULTIPLIER = 1.3        # winners font 121-138% du target naturel
+_DEFAULT_SL_TIGHTEN_PCT = 0.0           # SL naturel = invalidation pattern (trade actif plus longtemps)
 
 
 class ReversalDetector:
@@ -50,6 +55,8 @@ class ReversalDetector:
         min_head_prominence_pct: float = _DEFAULT_MIN_HEAD_PROMINENCE_PCT,
         min_neck_distance_pct: float = _DEFAULT_MIN_NECK_DISTANCE_PCT,
         neck_buffer_pct: float = _DEFAULT_NECK_BUFFER_PCT,
+        target_multiplier: float = _DEFAULT_TARGET_MULTIPLIER,
+        sl_tighten_pct: float = _DEFAULT_SL_TIGHTEN_PCT,
     ) -> None:
         self._window = window_bars
         self._twin_tol = twin_tol_pct
@@ -57,6 +64,16 @@ class ReversalDetector:
         self._head_prom = min_head_prominence_pct
         self._min_neck = min_neck_distance_pct
         self._neck_buf = neck_buffer_pct
+        self._target_mult = float(target_multiplier)
+        self._sl_tighten = float(sl_tighten_pct)
+
+    def _tighten_sl(self, entry: float, raw_invalidation: float) -> float:
+        """Resserre le SL vers entry de sl_tighten_pct (0.30 = 30% plus proche).
+        Garde toujours le SL au-dessus de entry pour SHORT / au-dessous pour LONG."""
+        if self._sl_tighten <= 0:
+            return raw_invalidation
+        sl_distance = raw_invalidation - entry
+        return entry + sl_distance * (1.0 - self._sl_tighten)
 
     def detect(
         self,
@@ -110,6 +127,11 @@ class ReversalDetector:
             return []
 
         height = avg - neckline.price
+        # SL = max(h1,h2) resserre vers entree pour ameliorer RR
+        raw_inv = max(h1.price, h2.price)
+        tightened_inv = self._tighten_sl(neckline.price, raw_inv)
+        # Target etendu pour capturer les winners qui font 138% du target naturel
+        target_extended = neckline.price - height * self._target_mult
         confidence = _score_twin(h1.price, h2.price, neckline.price, last_close, avg)
         return [ChartPatternDTO(
             kind=PatternKind.DOUBLE_TOP,
@@ -120,10 +142,10 @@ class ReversalDetector:
             start_timestamp=ohlcv["timestamp"].iloc[h1.index],
             end_timestamp=ohlcv["timestamp"].iloc[last_idx],
             breakout_level=neckline.price,
-            invalidation_level=max(h1.price, h2.price),
+            invalidation_level=tightened_inv,
             breakout_direction=BreakoutDirection.DOWN,
             height=height,
-            target=neckline.price - height,
+            target=target_extended,
             confidence=confidence,
             payload={
                 "high1": (h1.index, h1.price),
@@ -136,6 +158,8 @@ class ReversalDetector:
     # ------------------------------------------------------------------
     # Double bottom (miroir)
     # ------------------------------------------------------------------
+    # NOTE optimisation : conditions identiques a DOUBLE_TOP (les ecarts
+    # rentabilite viennent de la confluence trend HTF, pas de la geometrie).
     def _detect_double_bottom(self, ohlcv, swings, symbol, timeframe) -> list[ChartPatternDTO]:
         last_close = float(ohlcv["close"].iloc[-1])
         if last_close <= 0:
@@ -160,6 +184,9 @@ class ReversalDetector:
         if last_close < avg * (1.0 - self._twin_tol):
             return []
         height = neckline.price - avg
+        raw_inv = min(l1.price, l2.price)
+        tightened_inv = self._tighten_sl(neckline.price, raw_inv)
+        target_extended = neckline.price + height * self._target_mult
         confidence = _score_twin(l1.price, l2.price, neckline.price, last_close, avg)
         return [ChartPatternDTO(
             kind=PatternKind.DOUBLE_BOTTOM,
@@ -170,10 +197,10 @@ class ReversalDetector:
             start_timestamp=ohlcv["timestamp"].iloc[l1.index],
             end_timestamp=ohlcv["timestamp"].iloc[last_idx],
             breakout_level=neckline.price,
-            invalidation_level=min(l1.price, l2.price),
+            invalidation_level=tightened_inv,
             breakout_direction=BreakoutDirection.UP,
             height=height,
-            target=neckline.price + height,
+            target=target_extended,
             confidence=confidence,
             payload={
                 "low1": (l1.index, l1.price),
@@ -226,6 +253,8 @@ class ReversalDetector:
         if last_close > head.price:
             return []
         height = head.price - neck_now
+        tightened_inv = self._tighten_sl(neck_now, head.price)
+        target_extended = neck_now - height * self._target_mult
         confidence = _score_hs(ls.price, head.price, rs.price, neck_now, head.price)
         return [ChartPatternDTO(
             kind=PatternKind.HEAD_SHOULDERS,
@@ -236,10 +265,10 @@ class ReversalDetector:
             start_timestamp=ohlcv["timestamp"].iloc[ls.index],
             end_timestamp=ohlcv["timestamp"].iloc[last_idx],
             breakout_level=neck_now,
-            invalidation_level=head.price,
+            invalidation_level=tightened_inv,
             breakout_direction=BreakoutDirection.DOWN,
             height=height,
-            target=neck_now - height,
+            target=target_extended,
             lower_line=line,
             confidence=confidence,
             payload={
@@ -291,6 +320,8 @@ class ReversalDetector:
         if last_close < head.price:
             return []
         height = neck_now - head.price
+        tightened_inv = self._tighten_sl(neck_now, head.price)
+        target_extended = neck_now + height * self._target_mult
         confidence = _score_hs(ls.price, head.price, rs.price, neck_now, head.price)
         return [ChartPatternDTO(
             kind=PatternKind.INVERSE_HEAD_SHOULDERS,
@@ -301,10 +332,10 @@ class ReversalDetector:
             start_timestamp=ohlcv["timestamp"].iloc[ls.index],
             end_timestamp=ohlcv["timestamp"].iloc[last_idx],
             breakout_level=neck_now,
-            invalidation_level=head.price,
+            invalidation_level=tightened_inv,
             breakout_direction=BreakoutDirection.UP,
             height=height,
-            target=neck_now + height,
+            target=target_extended,
             upper_line=line,
             confidence=confidence,
             payload={

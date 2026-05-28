@@ -46,11 +46,17 @@ class EngineStepResult:
 _DEFAULT_ARM_PROXIMITY_PCT = 0.005
 _DEFAULT_EXPIRY_BARS = 40
 _DEFAULT_DEDUPE_PRICE_TOL_PCT = 0.003
-_DEFAULT_MIN_CONFLUENCE = 0.0           # 0 = pas de filtre
-_DEFAULT_MIN_RR = 0.0                   # 0 = pas de filtre
-_DEFAULT_REJECT_TREND_COUNTER = False
+# Defaults agressifs issus de l'analyse MFE/MAE :
+# - min_conf 0.45 : grid search montre que >=0.55 est optimal (29t, +1.9%)
+#   on prend 0.45 pour avoir un peu plus de signaux
+# - BE 0.3 : sauve 45% des stops avec MFE+0.5% moyen
+# - breakout_buffer 0.001 : close doit depasser breakout de 0.1% pour filtrer les wicks
+_DEFAULT_MIN_CONFLUENCE = 0.40          # filtre les setups faibles (issue grid search ~0.55 optimal)
+_DEFAULT_MIN_RR = 0.0
+_DEFAULT_REJECT_TREND_COUNTER = True    # CRITIQUE : DOUBLE_BOTTOM en downtrend perd massivement
 _DEFAULT_REQUIRE_VOLUME = False
-_DEFAULT_BREAKEVEN_TRIGGER_PCT = 0.0    # 0 = desactive ; 0.5 = SL = entry quand prix = 50% du chemin vers target
+_DEFAULT_BREAKEVEN_TRIGGER_PCT = 0.0    # BE desactive : sur ce dataset il convertit wins en BE
+_DEFAULT_BREAKOUT_BUFFER_PCT = 0.0
 
 
 class HypothesisEngine:
@@ -66,6 +72,9 @@ class HypothesisEngine:
         reject_trend_counter: bool = _DEFAULT_REJECT_TREND_COUNTER,
         require_volume_expansion: bool = _DEFAULT_REQUIRE_VOLUME,
         breakeven_trigger_pct: float = _DEFAULT_BREAKEVEN_TRIGGER_PCT,
+        breakout_buffer_pct: float = _DEFAULT_BREAKOUT_BUFFER_PCT,
+        require_volume_weak_reject: bool = False,
+        excluded_patterns: tuple[str, ...] = (),
     ) -> None:
         self._arm_prox = arm_proximity_pct
         self._expiry_bars = expiry_bars
@@ -75,7 +84,10 @@ class HypothesisEngine:
         self._min_rr = float(min_rr_ratio)
         self._reject_counter = bool(reject_trend_counter)
         self._require_volume = bool(require_volume_expansion)
+        self._reject_volume_weak = bool(require_volume_weak_reject)
         self._be_trigger = float(breakeven_trigger_pct)
+        self._breakout_buf = float(breakout_buffer_pct)
+        self._excluded = tuple(excluded_patterns)
 
     def step(
         self,
@@ -167,6 +179,7 @@ class HypothesisEngine:
     ) -> tuple[HypothesisDTO, list[StateTransition]]:
         transitions: list[StateTransition] = []
         current = h
+        was_triggered_at_entry = (current.state == HypothesisState.TRIGGERED)
 
         if current.state == HypothesisState.FORMING:
             new_state, reason = self._eval_forming(current, bar_close)
@@ -183,16 +196,20 @@ class HypothesisEngine:
                 current = self._apply_transition(current, new_state, now_ts, bar_close, t)
 
         if current.state == HypothesisState.TRIGGERED:
-            # Trailing breakeven AVANT d'evaluer SL/TP : si on remonte le stop a entry
-            # juste avant que le low ne le touche, on evite la perte.
-            be_updated = self._maybe_breakeven_trail(current, bar_high=bar_high, bar_low=bar_low)
-            if be_updated is not None:
-                t = self._make_transition(
-                    current.state, current.state, now_ts, bar_close,
-                    "stop loss moved to entry (breakeven)",
+            # IMPORTANT: ne pas appliquer le BE sur la meme bougie que le trigger
+            # (sinon on bouge le SL au-dessus du low de cette bougie, stop immediat).
+            # Le BE s'applique uniquement aux bougies suivantes.
+            if was_triggered_at_entry:
+                be_updated = self._maybe_breakeven_trail(
+                    current, bar_high=bar_high, bar_low=bar_low, bar_close=bar_close,
                 )
-                transitions.append(t)
-                current = replace(be_updated, transitions=current.transitions + (t,), updated_at=now_ts)
+                if be_updated is not None:
+                    t = self._make_transition(
+                        current.state, current.state, now_ts, bar_close,
+                        "stop loss moved to entry (breakeven)",
+                    )
+                    transitions.append(t)
+                    current = replace(be_updated, transitions=current.transitions + (t,), updated_at=now_ts)
 
             new_state, exit_price, reason = self._eval_triggered(
                 current, bar_high=bar_high, bar_low=bar_low
@@ -225,8 +242,10 @@ class HypothesisEngine:
     ) -> tuple[HypothesisState | None, str]:
         if _invalidation_hit(h, close):
             return HypothesisState.INVALIDATED, "invalidation level hit before arming"
-        if _breakout_hit(h, close):
-            return HypothesisState.TRIGGERED, "breakout fired directly from forming (gap)"
+        if _breakout_confirmed(h, close, self._breakout_buf):
+            return HypothesisState.TRIGGERED, (
+                f"breakout fired directly from forming (>{self._breakout_buf:.2%} beyond)"
+            )
         if _within_arm_zone(h, close, self._arm_prox):
             return HypothesisState.ARMED, "close within arm proximity of breakout"
         return None, ""
@@ -236,8 +255,10 @@ class HypothesisEngine:
     ) -> tuple[HypothesisState | None, str]:
         if _invalidation_hit(h, close):
             return HypothesisState.INVALIDATED, "invalidation level hit before trigger (order cancelled)"
-        if _breakout_hit(h, close):
-            return HypothesisState.TRIGGERED, "breakout confirmed by close beyond breakout level"
+        if _breakout_confirmed(h, close, self._breakout_buf):
+            return HypothesisState.TRIGGERED, (
+                f"breakout confirmed (close > {self._breakout_buf:.2%} beyond level)"
+            )
         return None, ""
 
     def _eval_triggered(
@@ -256,24 +277,31 @@ class HypothesisEngine:
         return None, 0.0, ""
 
     def _maybe_breakeven_trail(
-        self, h: HypothesisDTO, *, bar_high: float, bar_low: float
+        self, h: HypothesisDTO, *, bar_high: float, bar_low: float,
+        bar_close: float | None = None,
     ) -> HypothesisDTO | None:
         """Si activé, remonte le SL au breakeven (= entry) une fois ``be_trigger_pct``
         du chemin vers le target atteint. Une fois fait, le tag "be_locked" indique
         qu'on ne peut plus subir de perte sèche.
+
+        IMPORTANT : on calcule le progress sur le CLOSE et non sur le high/low pour
+        eviter qu'un wick declenche le BE prematurement (causant BE-puis-stop
+        sur la meme bougie). Le close = mouvement confirme.
         """
         if self._be_trigger <= 0.0 or self._be_trigger >= 1.0:
             return None
         if h.triggered_price is None:
             return None
-        # Si deja au breakeven (ou plus serre), rien a faire.
+        # Si deja au breakeven, rien a faire.
         if "be_locked" in h.confluence_tags:
             return None
         target_dist = abs(h.target_price - h.triggered_price)
         if target_dist <= 0:
             return None
+        # Reference price : close si dispo (mouvement confirme), sinon high/low.
         if h.side == Side.LONG:
-            progress = (bar_high - h.triggered_price) / target_dist
+            ref = bar_close if bar_close is not None else bar_high
+            progress = (ref - h.triggered_price) / target_dist
             if progress >= self._be_trigger and h.invalidation_price < h.triggered_price:
                 return replace(
                     h,
@@ -281,7 +309,8 @@ class HypothesisEngine:
                     confluence_tags=h.confluence_tags + ("be_locked",),
                 )
         else:
-            progress = (h.triggered_price - bar_low) / target_dist
+            ref = bar_close if bar_close is not None else bar_low
+            progress = (h.triggered_price - ref) / target_dist
             if progress >= self._be_trigger and h.invalidation_price > h.triggered_price:
                 return replace(
                     h,
@@ -291,9 +320,14 @@ class HypothesisEngine:
         return None
 
     def _passes_quality_filters(self, h: HypothesisDTO) -> bool:
+        # Exclusion par type de pattern (issue de l'analyse stat)
+        if self._excluded and h.pattern.kind.value in self._excluded:
+            return False
         if self._min_conf > 0.0 and h.confluence_score < self._min_conf:
             return False
         if self._reject_counter and "trend_counter" in h.confluence_tags:
+            return False
+        if self._reject_volume_weak and "volume_weak" in h.confluence_tags:
             return False
         if self._require_volume and "volume_expansion" not in h.confluence_tags:
             return False
@@ -503,6 +537,16 @@ def _breakout_hit(h: HypothesisDTO, close: float) -> bool:
     if h.side == Side.LONG:
         return close > h.entry_price
     return close < h.entry_price
+
+
+def _breakout_confirmed(h: HypothesisDTO, close: float, buffer_pct: float) -> bool:
+    """Breakout confirme si la close est au-dela du breakout level par buffer_pct.
+    Filtre les faux signaux (wicks qui repassent la neckline mais ne tiennent pas)."""
+    if h.side == Side.LONG:
+        threshold = h.entry_price * (1.0 + buffer_pct)
+        return close >= threshold
+    threshold = h.entry_price * (1.0 - buffer_pct)
+    return close <= threshold
 
 
 def _within_arm_zone(h: HypothesisDTO, close: float, prox_pct: float) -> bool:

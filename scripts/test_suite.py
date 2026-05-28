@@ -26,8 +26,8 @@ sys.path.insert(0, str(ROOT / "src"))
 _TEST_DB = "test_suite_tmp.db"
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///./{_TEST_DB}"
 
-PASS = "✓"
-FAIL = "✗"
+PASS = "[OK]"
+FAIL = "[KO]"
 results: list[tuple[str, bool, str]] = []
 
 
@@ -198,7 +198,7 @@ def test_reversal():
 # ============================================================
 # 3. HypothesisEngine lifecycle
 # ============================================================
-@test("Engine: lifecycle FORMING→TRIGGERED→TARGET_HIT")
+@test("Engine: lifecycle FORMING->TRIGGERED->TARGET_HIT")
 def test_engine_lifecycle():
     import pandas as pd
     from datetime import datetime, UTC
@@ -206,7 +206,14 @@ def test_engine_lifecycle():
     from app.schemas.patterns import ChartPatternDTO, PatternKind, BreakoutDirection, TrendLine
     from app.schemas.hypothesis import HypothesisState
 
-    engine = HypothesisEngine(confluence_scorer=ConfluenceScorer())
+    # Test lifecycle: desactive les filtres qualite (on teste juste les transitions)
+    engine = HypothesisEngine(
+        confluence_scorer=ConfluenceScorer(),
+        min_confluence_score=0.0,
+        min_rr_ratio=0.0,
+        reject_trend_counter=False,
+        breakout_buffer_pct=0.0,
+    )
 
     # Cree un DataFrame minimal
     ts = pd.date_range("2024-01-01", periods=80, freq="15min", tz="UTC")

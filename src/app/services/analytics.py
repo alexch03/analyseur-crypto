@@ -191,6 +191,7 @@ def _filter_trades(
     reject_tags: tuple[str, ...],
     required_tags: tuple[str, ...],
     pattern_kinds: tuple[str, ...] | None,
+    excluded_patterns: tuple[str, ...] = (),
 ) -> list[float]:
     out: list[float] = []
     for t in trades:
@@ -202,6 +203,8 @@ def _filter_trades(
             continue
         if pattern_kinds and t.pattern_kind not in pattern_kinds:
             continue
+        if excluded_patterns and t.pattern_kind in excluded_patterns:
+            continue
         out.append(t.pct_gain)
     return out
 
@@ -209,13 +212,20 @@ def _filter_trades(
 async def optimize_filters(session: AsyncSession, top_n: int = 20) -> dict:
     """Grid search sur les filtres applicables a posteriori aux trades cloturés.
 
-    On ne peut pas simuler le breakeven (besoin de l'evolution intra-trade).
-    Mais on peut simuler tous les autres filtres : min_score, reject_tags, etc.
-    Retourne le top N configs par cumul compound.
+    Teste : min_score, reject_tags, required_tags, et EXCLUSION DE PATTERNS perdants.
+    Retourne les meilleures configs par cumul compound.
     """
     trades = await load_closed_trades(session)
     if not trades:
         return {"trades_available": 0, "results": []}
+
+    # Identifie les patterns perdants pour les inclure dans les combos d'exclusion
+    by_pattern: dict[str, list[float]] = {}
+    for t in trades:
+        by_pattern.setdefault(t.pattern_kind, []).append(t.pct_gain)
+    losing_patterns = sorted(
+        [p for p, gs in by_pattern.items() if len(gs) >= 3 and sum(gs) / len(gs) < -0.3]
+    )
 
     score_levels = [0.0, 0.35, 0.45, 0.55, 0.65]
     reject_combos = [
@@ -230,41 +240,53 @@ async def optimize_filters(session: AsyncSession, top_n: int = 20) -> dict:
         ("trend_aligned",),
         ("volume_expansion", "trend_aligned"),
     ]
-    pattern_combos = [None]   # all patterns - on pourrait drill down par pattern
+    # Combos d'exclusion : aucun, chaque pattern perdant individuellement, tous ensemble
+    exclude_combos: list[tuple[str, ...]] = [()]
+    if losing_patterns:
+        for p in losing_patterns:
+            exclude_combos.append((p,))
+        if len(losing_patterns) > 1:
+            exclude_combos.append(tuple(losing_patterns))
 
     candidates: list[dict] = []
     for ms in score_levels:
         for rj in reject_combos:
             for rq in require_combos:
-                gains = _filter_trades(
-                    trades,
-                    min_score=ms,
-                    reject_tags=rj,
-                    required_tags=rq,
-                    pattern_kinds=pattern_combos[0],
-                )
-                if len(gains) < 20:   # minimum stat pour etre fiable
-                    continue
-                s = _compute(
-                    label=f"score>={ms} reject={rj or '-'} require={rq or '-'}",
-                    gains=gains,
-                )
-                candidates.append({
-                    **_segment_to_dict(s),
-                    "config": {
-                        "min_confluence_score": ms,
-                        "reject_tags": list(rj),
-                        "required_tags": list(rq),
-                    },
-                })
+                for ex in exclude_combos:
+                    gains = _filter_trades(
+                        trades,
+                        min_score=ms,
+                        reject_tags=rj,
+                        required_tags=rq,
+                        pattern_kinds=None,
+                        excluded_patterns=ex,
+                    )
+                    if len(gains) < 15:   # min stat
+                        continue
+                    label_parts = [f"score>={ms}"]
+                    if rj:
+                        label_parts.append(f"reject={rj}")
+                    if rq:
+                        label_parts.append(f"require={rq}")
+                    if ex:
+                        label_parts.append(f"exclude={ex}")
+                    s = _compute(label=" ".join(label_parts), gains=gains)
+                    candidates.append({
+                        **_segment_to_dict(s),
+                        "config": {
+                            "min_confluence_score": ms,
+                            "reject_tags": list(rj),
+                            "required_tags": list(rq),
+                            "excluded_patterns": list(ex),
+                        },
+                    })
 
-    # Tri : cumul compound > expectancy (les deux importent, on optimise le cumul d'abord)
     candidates.sort(key=lambda x: (-x["cumul_compound_pct"], -x["expectancy_pct"]))
-
     baseline = _compute("baseline", [t.pct_gain for t in trades])
 
     return {
         "trades_available": len(trades),
         "baseline": _segment_to_dict(baseline),
+        "losing_patterns_detected": losing_patterns,
         "top_configs": candidates[:top_n],
     }

@@ -140,7 +140,7 @@ def print_segment(label: str, s: dict) -> None:
 
 async def main() -> None:
     from app.logging_setup import setup_logging
-    setup_logging(level_console=logging.WARNING)
+    setup_logging(level_console=logging.WARNING, disable_file=True)
 
     print("=" * 72)
     print(f"BACKTEST 2 SEMAINES x {len(TOP_10_LIQUID)} symbols x {TIMEFRAME}")
