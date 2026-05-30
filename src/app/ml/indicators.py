@@ -128,6 +128,7 @@ def compute_features(ohlcv: pd.DataFrame, idx: int = -1,
     high = s["high"].to_numpy(float)
     low = s["low"].to_numpy(float)
     vol = s["volume"].to_numpy(float) if "volume" in s.columns else np.array([])
+    open_ = s["open"].to_numpy(float) if "open" in s.columns else np.array([])
 
     feat: dict[str, float] = {k: float("nan") for k in INDICATOR_OHLCV}
     if len(close) < 30 or close[-1] <= 0:
@@ -143,9 +144,13 @@ def compute_features(ohlcv: pd.DataFrame, idx: int = -1,
     m = close[-20:].mean()
     sd = close[-20:].std()
     feat["bb_width_pct"] = (4.0 * sd / m) if m > 0 else float("nan")
+    feat["bb_pos"] = ((c - m) / sd) if sd > 0 else float("nan")
     if len(vol) >= 21:
         base = vol[-21:-1].mean()
         feat["vol_ratio"] = (vol[-1] / base) if base > 0 else float("nan")
+    if len(open_) > 0:
+        rng = high[-1] - low[-1]
+        feat["entry_body_ratio"] = abs(c - open_[-1]) / rng if rng > 0 else float("nan")
     if htf is not None and "timestamp" in s.columns:
         feat["htf_trend_score"] = _htf_trend_score(htf, s["timestamp"].iloc[-1])
     return feat

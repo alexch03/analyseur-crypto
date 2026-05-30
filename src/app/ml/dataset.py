@@ -152,12 +152,19 @@ def live_feature_row(
     regime_trend: str | None = None,
     regime_strength: float | None = None,
     entry_timestamp=None,
+    ohlcv: "pd.DataFrame | None" = None,
 ) -> pd.DataFrame:
     """Construit UNE ligne de features pour l'inférence live, via ``engineer_features``.
 
     Utilise exactement le même calcul que l'entraînement (parité train/serve).
     ``confluence_tags`` accepte une liste ou un JSON ; ``pattern_snapshot`` un dict
     ou un JSON. Retourne un DataFrame 1×len(ALL_FEATURES) prêt pour predict_proba.
+
+    ``ohlcv`` : DataFrame OHLCV jusqu'à la bougie d'entrée incluse (colonnes
+    open/high/low/close/volume). Si fourni, les indicateurs techniques sont
+    calculés via compute_features() — indispensable pour la parité train/serve
+    quand le dataset a été enrichi par build_ml_dataset.py. Si None (défaut),
+    les indicateurs restent NaN (comportement legacy, compatible dataset non-enrichi).
     """
     raw = pd.DataFrame([{
         "confluence_score": confluence_score,
@@ -173,6 +180,11 @@ def live_feature_row(
         "pattern_kind": pattern_kind,
         "timeframe_id": str(timeframe_id),
     }])
+    if ohlcv is not None and not ohlcv.empty:
+        from app.ml.indicators import compute_features
+        feats = compute_features(ohlcv)
+        for col, val in feats.items():
+            raw[col] = val
     return engineer_features(raw)[ALL_FEATURES]
 
 
