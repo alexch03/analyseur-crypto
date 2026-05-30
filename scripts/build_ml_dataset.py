@@ -191,9 +191,10 @@ def _eval_parsimonious(df: pd.DataFrame, n_splits: int = 5) -> None:
     print(f"  Features : {PARSIMONIOUS}")
     print("=" * 78)
 
-    available = [f for f in PARSIMONIOUS if f in df.columns]
+    # Exclut les colonnes 100% NaN (sinon SimpleImputer les drop -> StandardScaler 0 feature).
+    available = [f for f in PARSIMONIOUS if f in df.columns and df[f].notna().any()]
     if len(available) < 2:
-        print(f"  Seulement {len(available)} feature(s) disponible(s) -- skip.")
+        print(f"  Seulement {len(available)} feature(s) exploitable(s) (non 100% NaN) -- skip.")
         return
 
     missing = [f for f in PARSIMONIOUS if f not in available]
@@ -290,63 +291,136 @@ async def _run_backfill(args) -> None:
 
     symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]
     tfs = [t.strip() for t in args.tfs.split(",") if t.strip()]
-    # Calcule l'historique en bars pour le TF le plus fin (plus grande valeur)
-    history_bars = max(_bars_for(args.days, tf) for tf in tfs)
 
-    print(f"Backfill fidele : {len(symbols)} symboles x {tfs}, {args.days}j (~{history_bars} bougies max)")
+    print(f"Backfill fidele : {len(symbols)} symboles x {tfs}, {args.days}j calendaires/TF")
 
     fetcher = CCXTFetcher(settings.exchange_id)
-    print("Fetch BTC/USDT 1h pour timeline de regime...")
-    btc_rows = await fetcher.fetch_ohlcv("BTC/USDT", "1h", limit=500)
+    # Timeline de regime : il faut couvrir TOUTE la fenetre rejouee (sinon regime=None
+    # sur les vieux trades). On fetch assez de bougies 1h pour args.days jours.
+    btc_limit = max(500, args.days * 24 + 120)
+    print(f"Fetch BTC/USDT 1h pour timeline de regime (limit={btc_limit})...")
+    btc_rows = await fetcher.fetch_ohlcv("BTC/USDT", "1h", limit=btc_limit)
     btc_df = _rows_to_df(btc_rows)
     await fetcher.close()
     timeline = build_regime_timeline(btc_df)
-    print(f"Timeline regime : {len(timeline)} points")
+    span_days = 0
+    if timeline:
+        span_days = (timeline[-1][0] - timeline[0][0]).days
+    print(f"Timeline regime : {len(timeline)} points (~{span_days}j couverts)")
 
-    plan = ScanPlan(
-        symbols=symbols,
-        timeframes=tfs,
-        candles_per_fetch=history_bars + 60,
-    )
+    # history_bars PAR TF (pas le max global) : chaque TF rejoue args.days jours
+    # calendaires. Sinon le 4h rejouerait des centaines de jours (cout explose,
+    # fenetre incomparable entre TF).
+    max_fetch = max(_bars_for(args.days, tf) for tf in tfs) + 60
+    plan = ScanPlan(symbols=symbols, timeframes=tfs, candles_per_fetch=max_fetch)
     scanner = ContinuousScanner(plan=plan)
-    result = await scanner.backfill(
-        history_bars=history_bars,
-        bars_per_step=1,
-        symbols=symbols,
-        timeframes=tfs,
-        regime_timeline=timeline,
-    )
+    total_steps = total_patterns = 0
+    for tf in tfs:
+        hb = _bars_for(args.days, tf)
+        print(f"  -> backfill {tf} : {hb} bougies ({args.days}j) x {len(symbols)} symboles...")
+        result = await scanner.backfill(
+            history_bars=hb,
+            bars_per_step=1,
+            symbols=symbols,
+            timeframes=[tf],
+            regime_timeline=timeline,
+        )
+        total_steps += result["total_steps"]
+        total_patterns += result["total_patterns_detected"]
+        print(f"     {tf} OK : {result['total_steps']} steps, "
+              f"{result['total_patterns_detected']} patterns, {result['elapsed_seconds']}s")
     await scanner.stop()
-    print(f"Backfill termine : {result['total_steps']} steps, "
-          f"{result['total_patterns_detected']} patterns, "
-          f"{result['elapsed_seconds']}s")
+    print(f"Backfill termine : {total_steps} steps, {total_patterns} patterns au total")
 
 
-async def _fetch_ohlcv_cache(symbols: list[str], tfs: list[str],
-                              days: int) -> dict:
-    """Retourne {(symbol, tf): DataFrame} pour le calcul des indicateurs."""
+def _tf_id_to_str(db_path: Path) -> dict[str, str]:
+    """Mappe timeframe_id (numerique) -> libelle ('15m','1h','4h') via la table timeframes.
+
+    CRITIQUE : unit_trades.timeframe_id est un ID numerique (1,2,3), PAS le libelle.
+    Sans ce mapping, le cache OHLCV (cle par '15m'/'1h') ne matche jamais -> 0 injection.
+    """
+    conn = sqlite3.connect(str(db_path))
+    try:
+        rows = conn.execute("SELECT * FROM timeframes").fetchall()
+    finally:
+        conn.close()
+    # Schema timeframes : (id, label) -> {'1':'15m', '2':'1h', '3':'4h'}
+    return {str(r[0]): str(r[1]) for r in rows}
+
+
+def _pairs_with_oldest(db_path: Path) -> list[tuple[str, str, str]]:
+    """Retourne [(symbol, tf_id_str, oldest_entry_ts)] pour les trades clos.
+
+    L'horodatage du plus vieux trade dimensionne la fenetre OHLCV a fetcher
+    (data-driven) : le backfill rejoue un nombre de BOUGIES fixe par TF, donc la
+    couverture calendaire varie selon le TF -- on ne peut pas la deviner depuis --days.
+    """
+    conn = sqlite3.connect(str(db_path))
+    try:
+        rows = conn.execute(
+            """
+            SELECT s.base || '/' || s.quote AS symbol, u.timeframe_id,
+                   MIN(u.entry_timestamp) AS oldest
+            FROM unit_trades u
+            JOIN symbols s ON s.id = u.symbol_id
+            WHERE u.outcome IN ('TARGET_HIT','STOPPED')
+            GROUP BY symbol, u.timeframe_id
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+    return [(str(r[0]), str(r[1]), str(r[2])) for r in rows]
+
+
+async def _fetch_ohlcv_cache_db(db_path: Path) -> dict:
+    """Cache {(symbol, tf_id_str): DataFrame} dimensionne pour couvrir le plus
+    vieux trade clos de chaque paire (data-driven).
+
+    Cle par tf_id_str (et non le libelle) pour matcher directement la colonne
+    timeframe_id lue par _inject_indicators. Le libelle TF sert uniquement a l'appel
+    ccxt et a la duree de bougie.
+    """
     from app.config import settings
     from app.ingestion.ccxt_fetcher import CCXTFetcher
     from app.services.continuous_scanner import _rows_to_df
+    from app.services.period_utils import timeframe_bar_seconds
+
+    tf_map = _tf_id_to_str(db_path)
+    pairs = _pairs_with_oldest(db_path)
+    print(f"  Map TF id->libelle : {tf_map}")
+    print(f"  Paires (symbole,TF) a couvrir : {len(pairs)}")
 
     fetcher = CCXTFetcher(settings.exchange_id)
-    cache = {}
-    total = len(symbols) * len(tfs)
+    cache: dict = {}
+    now = pd.Timestamp.now(tz="UTC")
     done = 0
-    for sym in symbols:
-        for tf in tfs:
-            bars = _bars_for(days, tf) + 60
-            try:
-                rows = await fetcher.fetch_ohlcv(sym, tf, limit=bars)
-                df = _rows_to_df(rows)
-                if not df.empty:
-                    df = df.reset_index(drop=True)
-                    cache[(sym, tf)] = df
-            except Exception as exc:
-                print(f"  WARN fetch {sym}/{tf}: {exc}")
+    for symbol, tf_id, oldest in pairs:
+        tf_str = tf_map.get(tf_id)
+        if tf_str is None:
+            print(f"  WARN: timeframe_id {tf_id} absent de timeframes -> skip {symbol}")
             done += 1
-            if done % 10 == 0 or done == total:
-                print(f"  OHLCV : {done}/{total} paires fetchees...")
+            continue
+        bar_s = max(1, int(timeframe_bar_seconds(tf_str)))
+        oldest_dt = pd.Timestamp(oldest)
+        if oldest_dt.tzinfo is None:
+            oldest_dt = oldest_dt.tz_localize("UTC")
+        # +60 bougies de marge avant le plus vieux trade (compute_features exige >=30 barres).
+        span_bars = int((now - oldest_dt).total_seconds() / bar_s) + 60
+        CAP = 12000  # borne le cout de fetch ; le fetcher pagine au-dela du chunk exchange
+        want = max(120, min(CAP, span_bars))
+        if span_bars > CAP:
+            print(f"  WARN: {symbol}/{tf_str} plus vieux trade a {span_bars} bougies > cap {CAP} "
+                  f"-> les trades les plus anciens ne seront pas injectes")
+        try:
+            rows = await fetcher.fetch_ohlcv(symbol, tf_str, limit=want)
+            df = _rows_to_df(rows)
+            if not df.empty:
+                cache[(symbol, tf_id)] = df.reset_index(drop=True)
+        except Exception as exc:
+            print(f"  WARN fetch {symbol}/{tf_str} (want={want}): {exc}")
+        done += 1
+        if done % 10 == 0 or done == len(pairs):
+            print(f"  OHLCV : {done}/{len(pairs)} paires fetchees...")
     await fetcher.close()
     return cache
 
@@ -395,30 +469,11 @@ async def main() -> int:
         print("  ATTENTION : la DB live peut etre contaminee (runs pre-fix regime).")
         print("  Recommande : utiliser --backfill pour un dataset propre.")
 
-    # Determine les symboles et TFs a fetcher pour l'OHLCV
-    symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]
-    tfs = [t.strip() for t in args.tfs.split(",") if t.strip()]
-
-    # En mode DB existante, lire les (symbol, tf) reels depuis la DB
-    if not args.backfill:
-        try:
-            conn = sqlite3.connect(str(db_path))
-            rows = conn.execute("""
-                SELECT DISTINCT s.base||'/'||s.quote, u.timeframe_id
-                FROM unit_trades u
-                JOIN symbols s ON s.id = u.symbol_id
-                WHERE u.outcome IN ('TARGET_HIT','STOPPED')
-            """).fetchall()
-            conn.close()
-            if rows:
-                symbols = sorted(set(r[0] for r in rows))
-                tfs = sorted(set(str(r[1]) for r in rows))
-                print(f"  Symboles en DB : {len(symbols)} | TFs : {tfs}")
-        except Exception as exc:
-            print(f"  WARN lecture DB pour symboles : {exc}")
-
-    print(f"\nFetch OHLCV : {len(symbols)} symboles x {len(tfs)} TFs...")
-    ohlcv_cache = await _fetch_ohlcv_cache(symbols, tfs, args.days)
+    # Fetch OHLCV data-driven : couvre le plus vieux trade clos de chaque (symbole, TF)
+    # reellement present en DB. Independant de --symbols/--days (qui ne pilotent que le
+    # backfill) -> garantit l'alignement quel que soit le TF.
+    print("\nFetch OHLCV (data-driven : couvre le plus vieux trade par paire)...")
+    ohlcv_cache = await _fetch_ohlcv_cache_db(db_path)
     print(f"Cache OHLCV : {len(ohlcv_cache)} paires chargees")
 
     print("\nConstruction du dataset enrichi...")
