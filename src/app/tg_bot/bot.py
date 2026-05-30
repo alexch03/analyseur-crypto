@@ -112,11 +112,19 @@ def _save_prefs(prefs: dict) -> None:
 def auth_required(handler):
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id if update.effective_user else None
-        if cfg.ALLOWED_USER_IDS and user_id not in cfg.ALLOWED_USER_IDS:
-            msg = (
-                f"❌ Acces refuse. Ton chat_id: `{user_id}`.\n"
-                f"Ajoute-le dans `.env` (TELEGRAM_ADMIN_CHAT_ID)."
-            )
+        # FAIL-CLOSED : refus si ALLOWED_USER_IDS est vide OU si user_id n'y est pas.
+        # Empeche toute prise de controle quand TELEGRAM_ADMIN_CHAT_ID n'est pas configure.
+        if not cfg.ALLOWED_USER_IDS or user_id not in cfg.ALLOWED_USER_IDS:
+            if not cfg.ALLOWED_USER_IDS:
+                msg = (
+                    f"❌ Bot non configure (TELEGRAM_ADMIN_CHAT_ID manquant).\n"
+                    f"Ton chat_id: `{user_id}`. Ajoute-le dans `.env`."
+                )
+            else:
+                msg = (
+                    f"❌ Acces refuse. Ton chat_id: `{user_id}`.\n"
+                    f"Ajoute-le dans `.env` (TELEGRAM_ADMIN_CHAT_ID) si tu es l'admin."
+                )
             if update.message:
                 await update.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN)
             return
@@ -562,8 +570,13 @@ def main() -> int:
     print("=" * 60)
     print("  ANALYSEUR CRYPTO - Bot Telegram")
     print("=" * 60)
-    print(f"Token: ...{cfg.BOT_TOKEN[-10:]}")
-    print(f"Admin chat_id: {cfg.ALLOWED_USER_IDS or '(any - INSECURE!)'}")
+    # Ne loggue pas de fragment de token (meme partiel). Affiche juste sa presence.
+    print(f"Token: {'configure (' + str(len(cfg.BOT_TOKEN)) + ' chars)' if cfg.BOT_TOKEN else 'MANQUANT'}")
+    if cfg.ALLOWED_USER_IDS:
+        print(f"Admin chat_id: {cfg.ALLOWED_USER_IDS}")
+    else:
+        print("Admin chat_id: NON CONFIGURE — toutes les commandes seront REFUSEES")
+        print("  Ajoute TELEGRAM_ADMIN_CHAT_ID=<ton_chat_id> dans .env puis redemarre.")
     print(f"API base: {cfg.API_BASE}")
     print()
     print("Bot demarre - Ctrl+C pour stopper")

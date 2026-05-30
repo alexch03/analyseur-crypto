@@ -134,6 +134,9 @@ class ContinuousScanner:
             reject_trend_counter=bool(settings.reject_trend_counter),
             require_volume_expansion=bool(settings.require_volume_expansion),
             breakeven_trigger_pct=float(settings.breakeven_trigger_pct),
+            # Production : fail-closed sur regime inconnu pour eviter les
+            # 336 LONG continuations qu'on a vu passer en BEAR le 28/05.
+            reject_if_regime_unknown=True,
         )
         self._tracker = _LastBarTracker()
         self._stop_event = asyncio.Event()
@@ -251,12 +254,19 @@ class ContinuousScanner:
         history_bars: int = 250,
         symbols: list[str] | None = None,
         timeframes: list[str] | None = None,
+        regime_timeline: list[tuple[datetime, object]] | None = None,
     ) -> dict:
         """Reconstruit l'historique des hypothèses en rejouant les ``history_bars`` dernières
         bougies bar-par-bar. Bcp plus lent qu'un scan ponctuel mais produit un cumul %
         immédiatement (winrate, best/worst, etc.).
 
         ``bars_per_step`` > 1 saute des bougies (gain de vitesse, perd un peu de précision).
+
+        ``regime_timeline`` : liste triee (timestamp, MarketRegime) pour rejouer le
+        regime de marche EXACTEMENT comme en live (le live appelle _detect_market_regime
+        a chaque cycle). Sans timeline, le regime reste None pendant le backfill, ce qui
+        DIVERGE du live si le moteur a reject_if_regime_unknown=True. Voir
+        build_regime_timeline().
         """
         import time
         t0 = time.monotonic()
@@ -268,7 +278,8 @@ class ContinuousScanner:
             for tf in target_tfs:
                 try:
                     steps, patterns = await self._backfill_pair(
-                        symbol, tf, history_bars=history_bars, bars_per_step=bars_per_step
+                        symbol, tf, history_bars=history_bars, bars_per_step=bars_per_step,
+                        regime_timeline=regime_timeline,
                     )
                     total_steps += steps
                     total_patterns += patterns
@@ -286,7 +297,8 @@ class ContinuousScanner:
         }
 
     async def _backfill_pair(
-        self, symbol: str, tf: str, *, history_bars: int, bars_per_step: int
+        self, symbol: str, tf: str, *, history_bars: int, bars_per_step: int,
+        regime_timeline: list[tuple[datetime, object]] | None = None,
     ) -> tuple[int, int]:
         rows = await self._fetcher.fetch_ohlcv(symbol, tf, limit=history_bars + 50)
         if not rows or len(rows) < 60:
@@ -305,6 +317,13 @@ class ContinuousScanner:
 
             for i in range(start_idx, n, bars_per_step):
                 df_slice = df_full.iloc[: i + 1].reset_index(drop=True)
+                # Replay du regime de marche au timestamp de la bougie courante
+                # (parite avec le live qui appelle _detect_market_regime chaque cycle).
+                if regime_timeline:
+                    bar_ts = df_slice["timestamp"].iloc[-1].to_pydatetime()
+                    regime = _regime_at(regime_timeline, bar_ts)
+                    if regime is not None:
+                        self._engine.set_market_regime(regime)
                 swings = detect_swings(df_slice, left=3, right=3)
                 patterns = []
                 for det in self._plan.detectors:
@@ -490,7 +509,8 @@ class ContinuousScanner:
                                 pnl_usd = pct / 100.0 * size_usd
                                 get_safety().record_close(pnl_usd=pnl_usd)
                             except Exception:
-                                pass
+                                # Safety n'est pas critique pour la cloture, on logge mais on continue.
+                                logger.warning("Safety record_close failed", exc_info=True)
                         except Exception:
                             logger.exception("Executor close failed for %s", h.id)
         except Exception as e:
@@ -548,7 +568,54 @@ def _rows_to_df(rows) -> pd.DataFrame:
             "close": float(r.close),
             "volume": float(r.volume),
         })
-    return pd.DataFrame(out_rows)
+    df = pd.DataFrame(out_rows)
+    # Garde-fou qualite : log (non bloquant) si OHLCV incoherent (high<low, etc.).
+    if len(df) > 0:
+        from app.ingestion.data_quality import validate_ohlcv_df
+        issues = validate_ohlcv_df(df)
+        if issues:
+            logger.warning(
+                "OHLCV incoherent : %d anomalie(s), ex: %s",
+                len(issues), "; ".join(f"[{i.index}]{i.kind}" for i in issues[:5]),
+            )
+    return df
+
+
+def build_regime_timeline(btc_df: pd.DataFrame, *, min_history: int = 60):
+    """Construit une timeline (timestamp, MarketRegime) pour rejouer le regime
+    en backtest EXACTEMENT comme le live le calcule a chaque cycle.
+
+    Pour chaque bougie BTC a partir de ``min_history``, calcule le regime sur la
+    fenetre [0:k+1] (donnees passees uniquement -> pas de look-ahead) et l'horodate.
+    """
+    from app.services.market_regime import detect_regime
+
+    timeline: list[tuple[datetime, object]] = []
+    n = len(btc_df)
+    if n < min_history or "timestamp" not in btc_df.columns:
+        return timeline
+    for k in range(min_history, n):
+        sub = btc_df.iloc[: k + 1]
+        try:
+            regime = detect_regime(sub)
+        except Exception:
+            continue
+        ts = sub["timestamp"].iloc[-1]
+        ts = ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else ts
+        timeline.append((ts, regime))
+    return timeline
+
+
+def _regime_at(timeline: list[tuple[datetime, object]], ts: datetime):
+    """Renvoie le regime le plus recent dont le timestamp est <= ts (lookup lineaire
+    suffisant : timeline triee, appels en ordre chronologique pendant le replay)."""
+    found = None
+    for t, regime in timeline:
+        if t <= ts:
+            found = regime
+        else:
+            break
+    return found
 
 
 async def _ensure_exchange_id(session: AsyncSession, code: str) -> int:

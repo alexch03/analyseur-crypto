@@ -7,6 +7,11 @@ its toggles/configuration across restarts without editing `.env`.
 from __future__ import annotations
 
 import json
+import os
+import sys
+import tempfile
+import threading
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -14,6 +19,96 @@ from typing import Any
 from app.config import settings
 
 STATE_FILE = Path(".runtime_control.json")
+_LOCK_FILE = Path(".runtime_control.json.lock")
+
+# Verrou intra-process : evite les races entre coroutines/threads dans la meme app.
+_INPROC_LOCK = threading.RLock()
+
+
+class _CrossProcessLock:
+    """Verrou cross-process portable (Windows msvcrt + POSIX fcntl).
+
+    Utilise un fichier sentinel `.runtime_control.json.lock`. Le lock est
+    re-entrant via `_INPROC_LOCK` pour ne pas se bloquer soi-meme.
+    """
+
+    def __init__(self, path: Path, timeout: float = 5.0) -> None:
+        self._path = path
+        self._timeout = timeout
+        self._fh = None
+
+    def __enter__(self) -> "_CrossProcessLock":
+        _INPROC_LOCK.acquire()
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._fh = open(self._path, "a+b")
+        deadline = time.monotonic() + self._timeout
+        if sys.platform == "win32":
+            import msvcrt
+            while True:
+                try:
+                    msvcrt.locking(self._fh.fileno(), msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        self._fh.close()
+                        self._fh = None
+                        _INPROC_LOCK.release()
+                        raise TimeoutError(f"Unable to lock {self._path} after {self._timeout}s")
+                    time.sleep(0.05)
+        else:
+            import fcntl
+            while True:
+                try:
+                    fcntl.lockf(self._fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        self._fh.close()
+                        self._fh = None
+                        _INPROC_LOCK.release()
+                        raise TimeoutError(f"Unable to lock {self._path} after {self._timeout}s")
+                    time.sleep(0.05)
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        try:
+            if self._fh is not None:
+                if sys.platform == "win32":
+                    import msvcrt
+                    try:
+                        msvcrt.locking(self._fh.fileno(), msvcrt.LK_UNLCK, 1)
+                    except OSError:
+                        pass
+                else:
+                    import fcntl
+                    try:
+                        fcntl.lockf(self._fh.fileno(), fcntl.LOCK_UN)
+                    except OSError:
+                        pass
+                self._fh.close()
+                self._fh = None
+        finally:
+            _INPROC_LOCK.release()
+
+
+def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
+    """Ecrit le JSON via fichier temporaire + os.replace (atomique POSIX/Windows)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_fd, tmp_path = tempfile.mkstemp(
+        prefix=path.name + ".", suffix=".tmp", dir=str(path.parent) or "."
+    )
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=True, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 # Défaut dashboard : fenêtre en nombre de bougies (backtest_limit / optimize_limit), pas un calendrier implicite.
 DEFAULT_ANALYSIS_PERIOD_PRESET = "custom"
@@ -119,8 +214,9 @@ def load_state() -> dict[str, Any]:
         state = _default_state()
         save_state(state)
         return state
-    with STATE_FILE.open("r", encoding="utf-8") as f:
-        data = json.load(f)
+    with _CrossProcessLock(_LOCK_FILE):
+        with STATE_FILE.open("r", encoding="utf-8") as f:
+            data = json.load(f)
     # Forward-compat default merge (sans écraser la sélection workspace si absente du JSON).
     defaults = dict(_default_state())
     dash_ds = defaults.pop("dashboard_dataset_file", "__live__")
@@ -174,12 +270,20 @@ def load_state() -> dict[str, Any]:
 
 def save_state(state: dict[str, Any]) -> dict[str, Any]:
     state["updated_at"] = datetime.now(tz=UTC).isoformat()
-    with STATE_FILE.open("w", encoding="utf-8") as f:
-        json.dump(state, f, ensure_ascii=True, indent=2)
+    with _CrossProcessLock(_LOCK_FILE):
+        _atomic_write_json(STATE_FILE, state)
     return state
 
 
 def patch_state(patch: dict[str, Any]) -> dict[str, Any]:
-    state = load_state()
-    state.update(patch)
-    return save_state(state)
+    """Read-modify-write atomique sous verrou pour eviter les races API/worker."""
+    with _CrossProcessLock(_LOCK_FILE):
+        if STATE_FILE.exists():
+            with STATE_FILE.open("r", encoding="utf-8") as f:
+                state = json.load(f)
+        else:
+            state = _default_state()
+        state.update(patch)
+        state["updated_at"] = datetime.now(tz=UTC).isoformat()
+        _atomic_write_json(STATE_FILE, state)
+    return state

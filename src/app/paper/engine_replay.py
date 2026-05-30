@@ -18,6 +18,16 @@ Backtest mode uses unit quantity (default 1 crypto unit), includes:
 - opening/closing fees: fee_quote = price * unit_size * fee_rate (fee_rate is a CCXT-style fraction, e.g. 0.0006 = 0.06% of quote notional).
 - funding: per 8h interval, funding_quote = entry_notional * funding_rate_8h * n_intervals (rate can be negative).
 - detailed per-trade stats (duration, time in drawdown/negative, MAE/MFE)
+
+PARITÉ AVEC LE MOTEUR LIVE (HypothesisEngine)
+---------------------------------------------
+Ce moteur et ``app.services.hypothesis_engine.HypothesisEngine`` implementent la meme
+logique de trade de DEUX facons differentes. Les divergences (entree LIMITE-au-niveau
+ici vs entree CLOTURE-de-cassure + confirmation body + filtre regime cote live) sont
+mesurees et verrouillees par ``tests/test_engine_parity.py``. La porte d'entree opt-in
+``entry_*`` (voir ``__init__``) permet de rapprocher la SELECTION des trades de celle du
+live ; la divergence de PRIX d'execution residuelle (fill au niveau vs au close) reste,
+par choix de modele, documentee dans ce test.
 """
 
 from __future__ import annotations
@@ -128,10 +138,23 @@ def _resolve_intrabar_long(
     entry: float,
     trail_armed: bool,
 ) -> tuple[str, float]:
-    """Quand SL et TP sont tous deux dans [lo, hi] : règle déterministe (bougie haussière → TP d'abord)."""
+    """SL et TP touches dans la MEME bougie : on ne connait pas l'ordre intra-bougie
+    a partir des seuls OHLC.
+
+    Hypothese CONSERVATRICE (worst-case) : le cote ADVERSE (SL / SL_BE / TRAIL) est
+    resolu EN PREMIER. Garantit que le backtest ne surestime jamais le live.
+
+    NB: l'ancienne regle "bougie haussiere -> TP d'abord" etait un biais OPTIMISTE
+    (et meme a l'envers : une bougie haussiere fait souvent son creux avant son
+    sommet, donc le SL d'un LONG serait touche avant le TP). Voir test
+    test_intrabar_resolution_is_conservative.
+
+    Exception gap : si l'open est deja au-dela du TP (gap favorable franc), le TP
+    est reellement le premier prix disponible -> on l'accorde.
+    """
     eps = _be_entry_epsilon(entry)
-    bullish = c >= o
-    if bullish:
+    # Gap d'ouverture franchement au-dela du TP : le 1er prix tradable est >= tp.
+    if o >= tp and o > float(effective_sl):
         return "TP", float(tp)
     if trail_armed:
         return "TRAIL", float(effective_sl)
@@ -151,10 +174,13 @@ def _resolve_intrabar_short(
     entry: float,
     trail_armed: bool,
 ) -> tuple[str, float]:
-    """Quand SL et TP sont tous deux dans [lo, hi] : bougie baissière → TP short d'abord."""
+    """SL et TP touches dans la MEME bougie (SHORT) : hypothese CONSERVATRICE,
+    le cote adverse (SL / SL_BE / TRAIL) est resolu en premier.
+
+    Exception gap : si l'open est deja sous le TP short, on accorde le TP.
+    """
     eps = _be_entry_epsilon(entry)
-    bearish = c <= o
-    if bearish:
+    if o <= tp and o < float(effective_sl):
         return "TP", float(tp)
     if trail_armed:
         return "TRAIL", float(effective_sl)
@@ -290,6 +316,13 @@ def replay_engine_from_bt_cfg(bt: dict[str, Any]) -> ReplayBacktestEngine:
         timeout_bb_period=max(2, int(bt.get("replay_timeout_bb_period", 20))),
         timeout_sma_fast=max(2, int(bt.get("replay_timeout_sma_fast", 10))),
         timeout_sma_slow=max(2, int(bt.get("replay_timeout_sma_slow", 20))),
+        # Porte d'entree fidele au live (opt-in ; defaut off => comportement historique).
+        # Le filtre regime exige un objet MarketRegime, non transmissible via ce dict scalaire :
+        # il reste a cabler par construction directe (cf. tests/test_engine_parity.py).
+        entry_require_close_breakout=bool(bt.get("replay_entry_require_close_breakout", False)),
+        entry_min_body_ratio=float(bt.get("replay_entry_min_body_ratio", 0.0)),
+        entry_breakout_buffer_pct=float(bt.get("replay_entry_breakout_buffer_pct", 0.0)),
+        entry_abort_on_invalidation=bool(bt.get("replay_entry_abort_on_invalidation", False)),
     )
 
 
@@ -309,6 +342,23 @@ class ReplayBacktestEngine:
         trail_after_r: float | None = None,
         trail_atr_mult: float | None = None,
         trail_atr_period: int = 14,
+        # --- Porte d'entree "fidele au live" (opt-in ; tout off => comportement historique) ---
+        # Replique les conditions d'ARMEMENT/TRIGGER du HypothesisEngine live, absentes du
+        # replay par defaut (cf. docstring du module et tests/test_engine_parity.py) :
+        #   - entry_require_close_breakout : exige une CLOTURE au-dela du niveau (pas une
+        #     simple meche qui traverse le prix d'entree),
+        #   - entry_min_body_ratio : body ratio minimum de la bougie d'entree (anti-wick),
+        #     equivalent de min_breakout_body_ratio cote live,
+        #   - entry_regime / entry_regime_min_score : filtre regime au moment de l'entree
+        #     (pattern_regime_score(setup_type, regime) >= seuil), comme _still_passes_regime_filter,
+        #   - entry_abort_on_invalidation : abandonne le trade (NO_TRADE) si la cloture franchit
+        #     l'invalidation avant l'entree, comme la transition live FORMING/ARMED -> INVALIDATED.
+        entry_require_close_breakout: bool = False,
+        entry_min_body_ratio: float = 0.0,
+        entry_breakout_buffer_pct: float = 0.0,
+        entry_abort_on_invalidation: bool = False,
+        entry_regime: object | None = None,
+        entry_regime_min_score: float = 0.70,
         timeout_smart_extend: bool = True,
         timeout_grace_bars: int | None = None,
         timeout_max_extensions: int = 3,
@@ -328,6 +378,12 @@ class ReplayBacktestEngine:
         self.trail_after_r = trail_after_r
         self.trail_atr_mult = trail_atr_mult
         self.trail_atr_period = max(2, trail_atr_period)
+        self.entry_require_close_breakout = bool(entry_require_close_breakout)
+        self.entry_min_body_ratio = float(entry_min_body_ratio)
+        self.entry_breakout_buffer_pct = float(entry_breakout_buffer_pct)
+        self.entry_abort_on_invalidation = bool(entry_abort_on_invalidation)
+        self.entry_regime = entry_regime
+        self.entry_regime_min_score = float(entry_regime_min_score)
         self.timeout_smart_extend = timeout_smart_extend
         self.timeout_grace_bars = timeout_grace_bars
         self.timeout_max_extensions = max(0, timeout_max_extensions)
@@ -421,12 +477,35 @@ class ReplayBacktestEngine:
         """Unified LONG/SHORT trade simulation using a directional multiplier."""
         n = len(closes)
         end = min(signal_index + self.max_holding_bars, n - 1)
+        is_long = setup.side == Side.LONG
+        # Porte d'entree fidele au live : active des qu'au moins un critere est configure.
+        # Off (defaut) => simple "le prix touche entry" comme historiquement.
+        gate_on = (
+            self.entry_require_close_breakout
+            or self.entry_min_body_ratio > 0.0
+            or self.entry_regime is not None
+        )
 
         entry_idx: int | None = None
         for j in range(signal_index + 1, end + 1):
-            if lows[j] <= setup.entry <= highs[j]:
-                entry_idx = j
-                break
+            c_j = float(closes[j])
+            # Abandon avant entree si la CLOTURE franchit l'invalidation (mirroir du passage
+            # live FORMING/ARMED -> INVALIDATED : l'ordre est annule, AUCUN trade n'a lieu).
+            if self.entry_abort_on_invalidation and (
+                (is_long and c_j <= float(setup.stop_loss))
+                or (not is_long and c_j >= float(setup.stop_loss))
+            ):
+                return None
+            if not (lows[j] <= setup.entry <= highs[j]):
+                continue
+            if gate_on:
+                o_j = float(opens[j]) if opens is not None else c_j
+                if not self._entry_confirmed(
+                    o_j, float(highs[j]), float(lows[j]), c_j, setup, is_long
+                ):
+                    continue
+            entry_idx = j
+            break
         if entry_idx is None:
             return None
 
@@ -441,7 +520,6 @@ class ReplayBacktestEngine:
         initial_sl = float(setup.stop_loss)
         effective_sl = initial_sl
         trail_armed = False
-        is_long = setup.side == Side.LONG
 
         d = 1.0 if is_long else -1.0
         running_extreme = float(setup.entry)
@@ -598,6 +676,47 @@ class ReplayBacktestEngine:
                     bar_hours=bar_hours,
                 )
             deadline = new_deadline
+
+    def _entry_confirmed(
+        self,
+        o: float,
+        h: float,
+        l: float,
+        c: float,
+        setup: TradeSetupDTO,
+        is_long: bool,
+    ) -> bool:
+        """Porte d'entree fidele au live (cf. constructeur). Renvoie True si la bougie
+        confirme l'entree au sens du HypothesisEngine : cloture au-dela du niveau,
+        body solide, et regime favorable. Inerte tant qu'aucun critere n'est configure.
+
+        NB : le prix de remplissage reste ``setup.entry`` (modele d'ordre LIMITE pose au
+        niveau de cassure). Le live, lui, remplit a la CLOTURE de la bougie de cassure
+        (ordre marche). Cette difference de prix d'execution est la divergence
+        structurelle residuelle documentee dans tests/test_engine_parity.py ; la porte
+        n'aligne que la SELECTION des trades (quels trades sont pris), pas leur fill.
+        """
+        if self.entry_require_close_breakout or self.entry_min_body_ratio > 0.0:
+            # 1) Cloture au-dela du niveau de cassure (+ buffer optionnel), comme _breakout_confirmed.
+            if is_long:
+                if c < float(setup.entry) * (1.0 + self.entry_breakout_buffer_pct):
+                    return False
+            else:
+                if c > float(setup.entry) * (1.0 - self.entry_breakout_buffer_pct):
+                    return False
+            # 2) Body ratio (anti-wick).
+            if self.entry_min_body_ratio > 0.0:
+                rng = h - l
+                body_ratio = abs(c - o) / rng if rng > 0 else 0.0
+                if body_ratio < self.entry_min_body_ratio:
+                    return False
+        # 3) Filtre regime au moment de l'entree (setups non types pattern => score 1.0 => jamais bloque).
+        if self.entry_regime is not None:
+            from app.services.market_regime import pattern_regime_score
+            score = pattern_regime_score(setup.setup_type, self.entry_regime)
+            if score < self.entry_regime_min_score:
+                return False
+        return True
 
     def seek_entry_after_signal(
         self,

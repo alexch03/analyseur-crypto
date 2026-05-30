@@ -188,30 +188,32 @@ def detect_regime(
 # Pour chaque pattern, le "regime ideal" (boost) ou "regime contre" (penalize)
 PATTERN_REGIME_AFFINITY: dict[str, dict[str, float]] = {
     # bull_boost, bear_boost, range_boost (multiplier sur quality 0..1)
-    "DOUBLE_TOP":             {"BULL": 0.5, "BEAR": 1.2, "RANGE": 1.0},  # bearish reversal
-    "DOUBLE_BOTTOM":          {"BULL": 1.2, "BEAR": 0.5, "RANGE": 1.0},  # bullish reversal
-    "HEAD_SHOULDERS":         {"BULL": 0.4, "BEAR": 1.3, "RANGE": 0.9},
-    "INVERSE_HEAD_SHOULDERS": {"BULL": 1.3, "BEAR": 0.4, "RANGE": 0.9},
-    "CHANNEL_UP":             {"BULL": 1.2, "BEAR": 0.6, "RANGE": 1.0},
-    "CHANNEL_DOWN":           {"BULL": 0.6, "BEAR": 1.2, "RANGE": 1.0},
-    "FLAG_BULL":              {"BULL": 1.3, "BEAR": 0.5, "RANGE": 0.8},
-    "FLAG_BEAR":              {"BULL": 0.5, "BEAR": 1.3, "RANGE": 0.8},
-    "WEDGE_RISING":           {"BULL": 0.8, "BEAR": 1.1, "RANGE": 1.0},  # bearish reversal
-    "WEDGE_FALLING":          {"BULL": 1.1, "BEAR": 0.8, "RANGE": 1.0},  # bullish reversal
-    "TRIANGLE_ASC":           {"BULL": 1.2, "BEAR": 0.7, "RANGE": 1.0},
-    "TRIANGLE_DESC":          {"BULL": 0.7, "BEAR": 1.2, "RANGE": 1.0},
+    # REGLE : patterns fortement directionnels ont affinity=0.3 dans le regime adverse
+    # → avec strength=0.9, score=0.37 < seuil 0.65 → bloques automatiquement
+    "DOUBLE_TOP":             {"BULL": 0.3, "BEAR": 1.2, "RANGE": 1.0},  # bearish reversal
+    "DOUBLE_BOTTOM":          {"BULL": 1.2, "BEAR": 0.3, "RANGE": 1.0},  # bullish reversal
+    "HEAD_SHOULDERS":         {"BULL": 0.3, "BEAR": 1.3, "RANGE": 0.9},
+    "INVERSE_HEAD_SHOULDERS": {"BULL": 1.3, "BEAR": 0.3, "RANGE": 0.9},
+    "CHANNEL_UP":             {"BULL": 1.2, "BEAR": 0.4, "RANGE": 1.0},  # was BEAR:0.6
+    "CHANNEL_DOWN":           {"BULL": 0.4, "BEAR": 1.2, "RANGE": 1.0},  # was BULL:0.6
+    "FLAG_BULL":              {"BULL": 1.3, "BEAR": 0.3, "RANGE": 0.8},  # was BEAR:0.5
+    "FLAG_BEAR":              {"BULL": 0.3, "BEAR": 1.3, "RANGE": 0.8},  # was BULL:0.5
+    "WEDGE_RISING":           {"BULL": 0.8, "BEAR": 1.1, "RANGE": 1.0},  # bearish reversal (less extreme → peut retourner)
+    "WEDGE_FALLING":          {"BULL": 1.1, "BEAR": 0.8, "RANGE": 1.0},  # bullish reversal (idem)
+    "TRIANGLE_ASC":           {"BULL": 1.2, "BEAR": 0.5, "RANGE": 1.0},  # was BEAR:0.7
+    "TRIANGLE_DESC":          {"BULL": 0.5, "BEAR": 1.2, "RANGE": 1.0},  # was BULL:0.7
     "TRIANGLE_SYM":           {"BULL": 1.0, "BEAR": 1.0, "RANGE": 1.1},
     "RECTANGLE":              {"BULL": 0.9, "BEAR": 0.9, "RANGE": 1.3},  # consolidation
     # Nouveaux patterns (mai 2026)
-    "TRIPLE_TOP":             {"BULL": 0.4, "BEAR": 1.3, "RANGE": 0.9},  # 3 sommets = bearish reversal
-    "TRIPLE_BOTTOM":          {"BULL": 1.3, "BEAR": 0.4, "RANGE": 0.9},
-    "EXPANDING_TRIANGLE_BEARISH": {"BULL": 0.5, "BEAR": 1.2, "RANGE": 1.0},
-    "EXPANDING_TRIANGLE_BULLISH": {"BULL": 1.2, "BEAR": 0.5, "RANGE": 1.0},
-    "EXPANDING_TRIANGLE_SYM": {"BULL": 1.0, "BEAR": 1.0, "RANGE": 1.1},   # megaphone = forte vol incertaine
-    "PENNANT_BULL":           {"BULL": 1.3, "BEAR": 0.5, "RANGE": 0.8},   # continuation bullish
-    "PENNANT_BEAR":           {"BULL": 0.5, "BEAR": 1.3, "RANGE": 0.8},
-    "CUP_AND_HANDLE":         {"BULL": 1.3, "BEAR": 0.5, "RANGE": 0.9},   # bullish accumulation
-    "INVERSE_CUP_AND_HANDLE": {"BULL": 0.5, "BEAR": 1.3, "RANGE": 0.9},   # bearish distribution
+    "TRIPLE_TOP":             {"BULL": 0.3, "BEAR": 1.3, "RANGE": 0.9},  # was BULL:0.4
+    "TRIPLE_BOTTOM":          {"BULL": 1.3, "BEAR": 0.3, "RANGE": 0.9},  # was BEAR:0.4
+    "EXPANDING_TRIANGLE_BEARISH": {"BULL": 0.3, "BEAR": 1.2, "RANGE": 1.0},  # was BULL:0.5
+    "EXPANDING_TRIANGLE_BULLISH": {"BULL": 1.2, "BEAR": 0.3, "RANGE": 1.0},  # was BEAR:0.5
+    "EXPANDING_TRIANGLE_SYM": {"BULL": 1.0, "BEAR": 1.0, "RANGE": 1.1},
+    "PENNANT_BULL":           {"BULL": 1.3, "BEAR": 0.3, "RANGE": 0.8},  # was BEAR:0.5
+    "PENNANT_BEAR":           {"BULL": 0.3, "BEAR": 1.3, "RANGE": 0.8},  # was BULL:0.5
+    "CUP_AND_HANDLE":         {"BULL": 1.3, "BEAR": 0.3, "RANGE": 0.9},  # was BEAR:0.5
+    "INVERSE_CUP_AND_HANDLE": {"BULL": 0.3, "BEAR": 1.3, "RANGE": 0.9},  # was BULL:0.5
 }
 
 

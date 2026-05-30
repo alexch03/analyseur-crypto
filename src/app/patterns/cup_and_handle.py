@@ -26,20 +26,33 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from app.patterns._indicators import atr_at, compute_atr
 from app.schemas.domain import SwingKind, SwingPoint
 from app.schemas.patterns import (
     BreakoutDirection, ChartPatternDTO, PatternKind,
 )
 
-_DEFAULT_CUP_MIN_BARS = 20
-_DEFAULT_CUP_MAX_BARS = 100
-_DEFAULT_CUP_DEPTH_MIN_PCT = 0.05      # cup >= 5% depth
-_DEFAULT_CUP_DEPTH_MAX_PCT = 0.50      # cup <= 50% (sinon trop violent)
-_DEFAULT_RIM_TOL_PCT = 0.03            # 3% tolerance entre left et right rim
-_DEFAULT_HANDLE_MIN_BARS = 3
-_DEFAULT_HANDLE_MAX_BARS = 25
-_DEFAULT_HANDLE_MAX_RETRACE = 0.5      # handle <= 50% de la depth cup
-_DEFAULT_U_SHAPE_TOLERANCE = 0.35      # smoothness check : ecart-type des prix au fond
+# Durcissement post-mesure : 35% de faux positifs sur random walk (20 seeds)
+# avec les anciens defauts. Recalibre depuis les donnees live 24h :
+#  - depth 8-10% = 20.9% WR (sweet spot), 4-8% = 15% WR, >10% = degrade (BEAR)
+#  - smoothness winners median 0.99% vs losers 1.33% : seuil 1.8%
+#  - cup_bars winners median 52.5 : maintient max 60
+#  - handle_retrace : winners ont en fait des handles legerement plus profonds (32% vs 24%) -> seuil 35% maintenu
+#  - cup plus courte max (60 vs 100) : reduit la combinatoire de 80x22=1760 a 40x16=640
+_DEFAULT_CUP_MIN_BARS = 25
+_DEFAULT_CUP_MAX_BARS = 60
+_DEFAULT_CUP_DEPTH_MIN_PCT = 0.08      # 8% min (etait 5%) - elimine 80% des faux signaux, garde le bucket gagnant
+_DEFAULT_CUP_DEPTH_MAX_PCT = 0.40      # cup <= 40% (etait 50%)
+_DEFAULT_RIM_TOL_PCT = 0.015           # 1.5% tolerance entre left et right rim (etait 3%)
+_DEFAULT_HANDLE_MIN_BARS = 4
+_DEFAULT_HANDLE_MAX_BARS = 20
+_DEFAULT_HANDLE_MAX_RETRACE = 0.35     # handle <= 35% (etait 50%)
+_DEFAULT_U_SHAPE_TOLERANCE = 0.18      # smoothness plus strict (etait 0.35)
+# Buffer ATR pour le SL : un SL purement structurel (handle_low/high) se fait wick
+# par le bruit. Donnees live : Cup&Handle a SL moyen 2.3% et 14% WR ; on elargit
+# de 1.0 ATR par defaut pour absorber le bruit.
+_DEFAULT_SL_ATR_MULT = 1.0
+_DEFAULT_ATR_PERIOD = 14
 
 
 class CupHandleDetector:
@@ -57,6 +70,8 @@ class CupHandleDetector:
         handle_max_bars: int = _DEFAULT_HANDLE_MAX_BARS,
         handle_max_retrace: float = _DEFAULT_HANDLE_MAX_RETRACE,
         u_shape_tolerance: float = _DEFAULT_U_SHAPE_TOLERANCE,
+        sl_atr_mult: float = _DEFAULT_SL_ATR_MULT,
+        atr_period: int = _DEFAULT_ATR_PERIOD,
     ) -> None:
         self._cup_min = cup_min_bars
         self._cup_max = cup_max_bars
@@ -67,6 +82,26 @@ class CupHandleDetector:
         self._h_max = handle_max_bars
         self._h_retrace = handle_max_retrace
         self._u_tol = u_shape_tolerance
+        self._sl_atr_mult = float(sl_atr_mult)
+        self._atr_period = int(atr_period)
+
+    def _atr_buffered_invalidation(
+        self, ohlcv: pd.DataFrame, raw_invalidation: float, side_long: bool
+    ) -> float:
+        """Elargit le SL d'un multiple d'ATR pour absorber le bruit.
+
+        Si side_long=True : invalidation finale = raw - k*ATR.
+        Sinon : raw + k*ATR.
+        """
+        if self._sl_atr_mult <= 0:
+            return raw_invalidation
+        atr_series = compute_atr(ohlcv, period=self._atr_period)
+        last_close = float(ohlcv["close"].iloc[-1])
+        atr_val = atr_at(atr_series, len(ohlcv) - 1, fallback_pct_of=last_close)
+        if atr_val <= 0:
+            return raw_invalidation
+        buf = atr_val * self._sl_atr_mult
+        return raw_invalidation - buf if side_long else raw_invalidation + buf
 
     def detect(
         self, ohlcv: pd.DataFrame, swings: list[SwingPoint],
@@ -163,7 +198,10 @@ class CupHandleDetector:
 
                 # OK, pattern detecte
                 breakout_level = right_rim
-                invalidation = handle_low
+                # SL : handle_low elargi d'un buffer ATR (sinon wick systematique).
+                invalidation = self._atr_buffered_invalidation(
+                    ohlcv, handle_low, side_long=True
+                )
                 target = right_rim + depth  # target classique = depth ajoute au breakout
 
                 confidence = self._score_cup(depth_pct, handle_retrace, smoothness)
@@ -261,7 +299,10 @@ class CupHandleDetector:
                     continue
 
                 breakout_level = right_rim
-                invalidation = handle_high
+                # SL : handle_high elargi d'un buffer ATR (anti-wick).
+                invalidation = self._atr_buffered_invalidation(
+                    ohlcv, handle_high, side_long=False
+                )
                 target = right_rim - depth
 
                 confidence = self._score_cup(depth_pct, handle_retrace, smoothness)

@@ -295,22 +295,35 @@ async def _mfe_analysis(db_url: str) -> dict:
             # Fetch OHLCV
             pairs = {(f"{s.base}/{s.quote}", tf.code) for _, s, tf in rows}
             cache: dict = {}
+            fetch_failures: list[tuple[str, str, str]] = []
             for symbol, tfc in sorted(pairs):
-                try:
-                    if since_ms:
-                        bms = max(1, int(timeframe_bar_seconds(tfc) * 1000))
-                        now_ms = int(datetime.now(tz=UTC).timestamp() * 1000)
-                        want = min(5000, max(500, (now_ms - since_ms) // bms + 200))
-                        r = await fetcher.fetch_ohlcv(symbol, tfc, since_ms=since_ms, limit=int(want))
-                    else:
-                        r = await fetcher.fetch_ohlcv(symbol, tfc, limit=1500)
-                    if r:
-                        cache[(symbol, tfc)] = [
-                            (_utc(x.ts_open), float(x.high), float(x.low), float(x.close))
-                            for x in r
-                        ]
-                except Exception:
-                    pass
+                last_err: Exception | None = None
+                for attempt in range(3):
+                    try:
+                        if since_ms:
+                            bms = max(1, int(timeframe_bar_seconds(tfc) * 1000))
+                            now_ms = int(datetime.now(tz=UTC).timestamp() * 1000)
+                            want = min(5000, max(500, (now_ms - since_ms) // bms + 200))
+                            r = await fetcher.fetch_ohlcv(symbol, tfc, since_ms=since_ms, limit=int(want))
+                        else:
+                            r = await fetcher.fetch_ohlcv(symbol, tfc, limit=1500)
+                        if r:
+                            cache[(symbol, tfc)] = [
+                                (_utc(x.ts_open), float(x.high), float(x.low), float(x.close))
+                                for x in r
+                            ]
+                        last_err = None
+                        break
+                    except Exception as e:
+                        last_err = e
+                        # Backoff exponentiel : 1s, 2s, 4s
+                        await asyncio.sleep(2 ** attempt)
+                if last_err is not None:
+                    fetch_failures.append((symbol, tfc, str(last_err)))
+            if fetch_failures:
+                print(f"  [WARN] {len(fetch_failures)} fetch OHLCV en echec apres 3 tentatives :")
+                for sym, tfc, err in fetch_failures[:5]:
+                    print(f"    - {sym} {tfc}: {err[:120]}")
 
             for ut, s, tf in rows:
                 h = await session.get(Hypothesis, ut.hypothesis_id)
@@ -459,9 +472,13 @@ async def main(args) -> None:
         "trailing_stop_atr_mult": 0.0,
     }
 
-    best_compound = -9999.0
+    # None = aucune iteration n'a produit assez de trades pour calculer un compound.
+    # On ne reutilise plus la sentinelle -9999.0 (confondue avec un vrai resultat dans le rapport).
+    best_compound: float | None = None
     best_env_vars: list[str] = []
     all_recos: list[str] = []
+    iterations_with_data = 0
+    iterations_skipped: list[tuple[int, int]] = []  # (iteration, trade_count)
 
     for it in range(1, args.iterations + 1):
         db_name = f"loop_iter{it}.db"
@@ -490,10 +507,12 @@ async def main(args) -> None:
 
         if base["count"] < 10:
             print(f"    [!] Seulement {base['count']} trades — augmente --days ou utilise plus de symboles")
+            iterations_skipped.append((it, base["count"]))
             if it == args.iterations:
                 break
             # Prochaine iteration avec les memes params
             continue
+        iterations_with_data += 1
 
         # Affiche top 5 patterns
         by_pat = stats["breakdowns"].get("by_pattern", [])
@@ -548,7 +567,7 @@ async def main(args) -> None:
         # E. Simulation de la meilleure config sur les trades existants
         if opt.get("top_configs"):
             virt_compound = best_virt["cumul_compound_pct"]
-            if virt_compound > best_compound:
+            if best_compound is None or virt_compound > best_compound:
                 best_compound = virt_compound
                 # Construit les env vars recommandées
                 env_vars = [f"MIN_CONFLUENCE_SCORE={new_cfg['min_conf']}"]
@@ -593,7 +612,17 @@ async def main(args) -> None:
     print("\n" + "=" * 72)
     print("RÉSULTAT FINAL")
     print("=" * 72)
-    print(f"  Meilleur compound virtuel : {best_compound:+.2f}%")
+    if best_compound is None:
+        print(f"  Meilleur compound virtuel : N/A (donnees insuffisantes)")
+        if iterations_skipped:
+            print(f"  Iterations sans assez de trades (<10) :")
+            for it_idx, n in iterations_skipped:
+                print(f"    - iter {it_idx} : {n} trades")
+        print(f"  Conseils : augmente --days, ajoute des symboles, "
+              f"ou desactive les filtres dans cur_cfg.")
+    else:
+        print(f"  Meilleur compound virtuel : {best_compound:+.2f}% "
+              f"(sur {iterations_with_data} iteration(s) exploitable(s))")
 
     print(f"\n  Variables .env recommandées :")
     if best_env_vars:
@@ -613,10 +642,21 @@ async def main(args) -> None:
         f.write(f"# Recommendations — run_loop.py\n")
         f.write(f"# Jours: {args.days}  Symboles: {len(symbols)}  "
                 f"Iterations: {args.iterations}\n\n")
-        f.write(f"Meilleur compound virtuel : {best_compound:+.2f}%\n\n")
-        f.write("Variables .env a appliquer :\n")
-        for v in best_env_vars:
-            f.write(f"  {v}\n")
+        if best_compound is None:
+            f.write("Meilleur compound virtuel : N/A (donnees insuffisantes)\n")
+            f.write(f"Iterations exploitables : {iterations_with_data} / {args.iterations}\n")
+            if iterations_skipped:
+                f.write("Iterations sans assez de trades (<10) :\n")
+                for it_idx, n in iterations_skipped:
+                    f.write(f"  - iter {it_idx} : {n} trades\n")
+            f.write("\nAucune variable .env recommandee : relancer avec --days plus eleve "
+                    "ou plus de symboles.\n")
+        else:
+            f.write(f"Meilleur compound virtuel : {best_compound:+.2f}% "
+                    f"(sur {iterations_with_data} iteration(s) exploitable(s))\n\n")
+            f.write("Variables .env a appliquer :\n")
+            for v in best_env_vars:
+                f.write(f"  {v}\n")
         if all_recos:
             f.write("\nRecommendations patterns :\n")
             for r in all_recos:

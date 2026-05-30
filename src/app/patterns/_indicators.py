@@ -70,6 +70,43 @@ def compute_volume_sma(volumes: np.ndarray | pd.Series, period: int = 20) -> np.
     return s.rolling(window=period, min_periods=1).mean().to_numpy(dtype=float)
 
 
+def compute_atr(
+    ohlcv: pd.DataFrame, period: int = 14
+) -> np.ndarray:
+    """Average True Range Wilder.
+
+    Retourne un np.ndarray de meme longueur (NaN au debut). Utile pour
+    placer un SL avec un buffer adapte a la volatilite (vs SL purement
+    structurel qui se fait wick).
+    """
+    if len(ohlcv) == 0:
+        return np.array([])
+    high = ohlcv["high"].astype(float)
+    low = ohlcv["low"].astype(float)
+    close = ohlcv["close"].astype(float)
+    prev_close = close.shift(1)
+    tr = pd.concat(
+        [
+            high - low,
+            (high - prev_close).abs(),
+            (low - prev_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+    atr = tr.ewm(alpha=1.0 / period, min_periods=period, adjust=False).mean()
+    return atr.fillna(0.0).to_numpy(dtype=float)
+
+
+def atr_at(atr: np.ndarray, idx: int, fallback_pct_of: float | None = None) -> float:
+    """Acces atr[idx] avec garde. Si NaN/0 et fallback fourni, retourne fallback_pct_of*0.005."""
+    if idx < 0 or idx >= len(atr):
+        return (fallback_pct_of * 0.005) if fallback_pct_of else 0.0
+    v = float(atr[idx])
+    if not np.isfinite(v) or v <= 0:
+        return (fallback_pct_of * 0.005) if fallback_pct_of else 0.0
+    return v
+
+
 # ────────────────────────────────────────────────────────────────────
 # Helpers pattern-specific
 # ────────────────────────────────────────────────────────────────────

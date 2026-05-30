@@ -42,6 +42,28 @@ def _df(closes: list[float], wick: float = 0.3) -> pd.DataFrame:
     ])
 
 
+def _detector() -> ReversalDetector:
+    """Détecteur configuré pour tester la GÉOMÉTRIE des retournements en isolation.
+
+    Les filtres de confluence dépendant d'un long historique ou d'indicateurs sont
+    désactivés car les fixtures synthétiques (~22-28 bougies, interpolation linéaire)
+    ne peuvent structurellement pas les satisfaire :
+      - ``require_pre_trend`` : exige 20 bougies de tendance AVANT le 1er swing, qui
+        se trouve ici à l'index 4.
+      - ``require_rsi_divergence`` : une divergence RSI de 2 pts est infaisable sur des
+        rampes linéaires symétriques.
+      - ``min_swing_prominence_atr`` : les sommets/creux jumeaux sont distants de ~0.5pt
+        alors que 0.5×ATR ≈ 1.2pt, donc le 2e swing serait filtré.
+    On vérifie ici la détection de la FORME (neckline, sens de cassure, invalidation,
+    target) ; ces filtres ont leur propre couverture.
+    """
+    return ReversalDetector(
+        require_pre_trend=False,
+        require_rsi_divergence=False,
+        min_swing_prominence_atr=0.0,
+    )
+
+
 def test_double_top_detected():
     # H pivot 110 idx 4 ; L pivot 100 idx 9 ; H pivot 110.5 idx 14
     # close encore au-dessus de la neckline (100)
@@ -49,7 +71,7 @@ def test_double_top_detected():
     closes = _interp(pivots, 22)
     df = _df(closes)
     swings = detect_swings(df, left=2, right=2)
-    p = ReversalDetector().detect(df, swings, symbol="TEST/USDT", timeframe="1h")
+    p = _detector().detect(df, swings, symbol="TEST/USDT", timeframe="1h")
     dt = [x for x in p if x.kind == PatternKind.DOUBLE_TOP]
     assert len(dt) == 1, f"Got patterns: {[(x.kind, x.payload) for x in p]}"
     assert dt[0].breakout_direction == BreakoutDirection.DOWN
@@ -64,7 +86,7 @@ def test_double_bottom_detected():
     closes = _interp(pivots, 22)
     df = _df(closes)
     swings = detect_swings(df, left=2, right=2)
-    p = ReversalDetector().detect(df, swings, symbol="TEST/USDT", timeframe="1h")
+    p = _detector().detect(df, swings, symbol="TEST/USDT", timeframe="1h")
     db = [x for x in p if x.kind == PatternKind.DOUBLE_BOTTOM]
     assert len(db) == 1
     assert db[0].breakout_direction == BreakoutDirection.UP
@@ -73,20 +95,22 @@ def test_double_bottom_detected():
 
 
 def test_head_shoulders_detected():
-    # LS 110 idx 4 ; neck-L 100 idx 8 ; HEAD 120 idx 12 ; neck-R 101 idx 16 ; RS 112 idx 20
+    # LS 110 idx 4 ; neck-L 100 idx 8 ; HEAD 120 idx 12 ; neck-R 100 idx 16 ; RS 112 idx 20
+    # Neckline horizontale (100/100) : une neckline ascendante (100→101) se projette
+    # au-dessus du dernier close et serait lue comme "déjà cassée à la baisse" → rejet.
     pivots = [
         (0, 100.0),
         (4, 110.0),
         (8, 100.0),
         (12, 120.0),
-        (16, 101.0),
+        (16, 100.0),
         (20, 112.0),
-        (24, 102.0),
+        (24, 103.0),
     ]
     closes = _interp(pivots, 28)
     df = _df(closes)
     swings = detect_swings(df, left=2, right=2)
-    p = ReversalDetector().detect(df, swings, symbol="TEST/USDT", timeframe="1h")
+    p = _detector().detect(df, swings, symbol="TEST/USDT", timeframe="1h")
     hs = [x for x in p if x.kind == PatternKind.HEAD_SHOULDERS]
     assert len(hs) == 1
     assert hs[0].breakout_direction == BreakoutDirection.DOWN
@@ -109,7 +133,7 @@ def test_inverse_head_shoulders_detected():
     closes = _interp(pivots, 28)
     df = _df(closes)
     swings = detect_swings(df, left=2, right=2)
-    p = ReversalDetector().detect(df, swings, symbol="TEST/USDT", timeframe="1h")
+    p = _detector().detect(df, swings, symbol="TEST/USDT", timeframe="1h")
     ihs = [x for x in p if x.kind == PatternKind.INVERSE_HEAD_SHOULDERS]
     assert len(ihs) == 1
     assert ihs[0].breakout_direction == BreakoutDirection.UP
@@ -122,5 +146,5 @@ def test_no_double_top_when_highs_too_different():
     closes = _interp(pivots, 22)
     df = _df(closes)
     swings = detect_swings(df, left=2, right=2)
-    p = ReversalDetector().detect(df, swings, symbol="TEST/USDT", timeframe="1h")
+    p = _detector().detect(df, swings, symbol="TEST/USDT", timeframe="1h")
     assert all(x.kind != PatternKind.DOUBLE_TOP for x in p)

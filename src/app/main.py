@@ -29,11 +29,25 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    # CORS : par defaut, on autorise uniquement le dashboard local (127.0.0.1 / localhost).
+    # Pour exposer l'API a d'autres origines, definir ANALYSEUR_CORS_ORIGINS=https://example.com,...
+    import os
+
+    _cors_env = os.environ.get("ANALYSEUR_CORS_ORIGINS", "").strip()
+    if _cors_env:
+        _origins = [o.strip() for o in _cors_env.split(",") if o.strip()]
+    else:
+        _origins = [
+            "http://127.0.0.1:8000",
+            "http://localhost:8000",
+            "http://127.0.0.1:3000",
+            "http://localhost:3000",
+        ]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=_origins,
         allow_credentials=True,
-        allow_methods=["*"],
+        allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
         allow_headers=["*"],
     )
 

@@ -35,6 +35,7 @@ def optimize_setup_parameters(
     swing_right_values: list[int] | None = None,
     strategy: str = "exhaustive",
     max_trials: int | None = None,
+    random_seed: int | None = 42,
 ) -> list[OptimizationResult]:
     """Optimise les paramètres moteur sur une grille discrète.
 
@@ -117,7 +118,9 @@ def optimize_setup_parameters(
             cap = int(max_trials) if max_trials is not None else 80
             cap = max(1, min(cap, len(combo_list)))
             if len(combo_list) > cap:
-                combo_list = random.sample(combo_list, cap)
+                # Seed fixe => optimisation reproductible run-to-run (cf README "deterministic").
+                rng = random.Random(random_seed)
+                combo_list = rng.sample(combo_list, cap)
         results = [run_combo(*c) for c in combo_list]
 
     results.sort(

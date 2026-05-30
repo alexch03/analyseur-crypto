@@ -62,7 +62,23 @@ _DEFAULT_TRAILING_ACTIVATION_PCT = 0.5  # active le trailing apres 50% du chemin
 # Adaptation au regime de marche : si activee, l'engine filtre/scale les patterns
 # selon affinite avec regime (BULL/BEAR/RANGE). Voir market_regime.PATTERN_REGIME_AFFINITY.
 _DEFAULT_REGIME_ADAPTIVE = True         # active par defaut
-_DEFAULT_REGIME_MIN_SCORE = 0.5         # rejette pattern si score regime < 0.5
+_DEFAULT_REGIME_MIN_SCORE = 0.70        # rejette pattern si score regime < 0.70 (etait 0.65)
+# NB: avec strength=0.9 (BEAR fort), il faut affinity >= 0.67 pour passer (etait 0.61).
+# Tous les patterns bullish (BEAR affinity=0.3) scorent 0.37 → bloques.
+# Fail-closed quand le regime est inconnu : evite le scenario observe sur 24h ou
+# 336 CUP_AND_HANDLE LONG sont passes en marche BEAR (filtre desactive par defaut
+# si market_regime is None apres echec de fetch BTC).
+# Default False pour ne pas casser les tests legacy ; le scanner production
+# l'active explicitement (continuous_scanner).
+_DEFAULT_REJECT_IF_REGIME_UNKNOWN = False
+_HIGHLY_DIRECTIONAL_PATTERNS = frozenset({
+    "CUP_AND_HANDLE", "INVERSE_CUP_AND_HANDLE",
+    "PENNANT_BULL", "PENNANT_BEAR",
+    "FLAG_BULL", "FLAG_BEAR",
+    "TRIANGLE_ASC", "TRIANGLE_DESC",
+    "CHANNEL_UP", "CHANNEL_DOWN",
+    "EXPANDING_TRIANGLE_BULLISH", "EXPANDING_TRIANGLE_BEARISH",
+})
 # Body ratio minimum pour confirmer un breakout (filtre les wicks)
 # 0.3 = au moins 30% de la bougie est du body (60% wicks max).
 # 0.0 = desactive (legacy)
@@ -90,6 +106,15 @@ class HypothesisEngine:
         min_breakout_body_ratio: float = _DEFAULT_MIN_BREAKOUT_BODY_RATIO,
         regime_adaptive: bool = _DEFAULT_REGIME_ADAPTIVE,
         regime_min_score: float = _DEFAULT_REGIME_MIN_SCORE,
+        reject_if_regime_unknown: bool = _DEFAULT_REJECT_IF_REGIME_UNKNOWN,
+        adaptive_enabled: bool = False,
+        adaptive_extend_atr_mult: float = 1.5,
+        adaptive_tighten_atr_mult: float = 0.7,
+        # Stop/target initiaux dimensionnes a la volatilite, au SPAWN (distinct du
+        # trailing et de la couche adaptive qui gerent un trade DEJA ouvert).
+        # 0.0 = OFF = comportement legacy (stop = invalidation du pattern).
+        spawn_atr_stop_mult: float = 0.0,   # ex 2.0 : stop elargi a >= 2x ATR (anti stops serres)
+        spawn_atr_target_rr: float = 0.0,   # ex 2.0 : target = entry +/- 2x distance_stop
     ) -> None:
         self._arm_prox = arm_proximity_pct
         self._expiry_bars = expiry_bars
@@ -107,8 +132,16 @@ class HypothesisEngine:
         self._trail_activate = float(trailing_activation_pct)
         self._regime_adaptive = bool(regime_adaptive)
         self._regime_min_score = float(regime_min_score)
+        self._reject_if_regime_unknown = bool(reject_if_regime_unknown)
         self._market_regime = None  # MarketRegime | None, mis a jour par set_market_regime()
         self._min_breakout_body = float(min_breakout_body_ratio)
+        # Couche adaptative (gestion dynamique du trade par features continues).
+        self._adaptive_enabled = bool(adaptive_enabled)
+        self._adaptive_extend_mult = float(adaptive_extend_atr_mult)
+        self._adaptive_tighten_mult = float(adaptive_tighten_atr_mult)
+        self._adaptive_arrays = None  # rempli par step() pour la duree de l'appel
+        self._spawn_atr_stop_mult = float(spawn_atr_stop_mult)
+        self._spawn_atr_target_rr = float(spawn_atr_target_rr)
 
     def set_market_regime(self, regime) -> None:
         """Hook appele par le scanner avec le regime detecte courant."""
@@ -138,6 +171,19 @@ class HypothesisEngine:
         # Utile pour confirmer un breakout (body fort = momentum reel, pas wick)
         bar_range = bar_high - bar_low
         bar_body_ratio = abs(bar_close - bar_open) / bar_range if bar_range > 0 else 0.0
+
+        # Couche adaptative : prepare les arrays (passe uniquement) pour cette passe.
+        if self._adaptive_enabled:
+            self._adaptive_arrays = (
+                ohlcv["high"].to_numpy(dtype=float),
+                ohlcv["low"].to_numpy(dtype=float),
+                ohlcv["close"].to_numpy(dtype=float),
+                ohlcv["volume"].to_numpy(dtype=float) if "volume" in ohlcv.columns
+                else None,
+                ohlcv["open"].to_numpy(dtype=float),
+            )
+        else:
+            self._adaptive_arrays = None
 
         active = [h for h in existing if not h.is_terminal]
         terminal = [h for h in existing if h.is_terminal]
@@ -229,11 +275,27 @@ class HypothesisEngine:
                 current = self._apply_transition(current, new_state, now_ts, bar_close, t)
 
         if current.state == HypothesisState.ARMED:
-            new_state, reason = self._eval_armed(current, bar_close, bar_body_ratio)
-            if new_state is not None:
-                t = self._make_transition(current.state, new_state, now_ts, bar_close, reason)
-                transitions.append(t)
-                current = self._apply_transition(current, new_state, now_ts, bar_close, t)
+            # Couche adaptative : annuler l'ordre en attente si l'information
+            # independante est franchement adverse AVANT le declenchement.
+            if self._adaptive_enabled:
+                feats = self._adaptive_features(current, bar_close)
+                if feats is not None:
+                    from app.strategy.adaptive import decide_pending
+                    if decide_pending(feats):
+                        t = self._make_transition(
+                            current.state, HypothesisState.INVALIDATED, now_ts, bar_close,
+                            "adaptive: ordre annule (conviction adverse avant trigger)",
+                        )
+                        transitions.append(t)
+                        current = self._apply_transition(
+                            current, HypothesisState.INVALIDATED, now_ts, bar_close, t
+                        )
+            if current.state == HypothesisState.ARMED:
+                new_state, reason = self._eval_armed(current, bar_close, bar_body_ratio)
+                if new_state is not None:
+                    t = self._make_transition(current.state, new_state, now_ts, bar_close, reason)
+                    transitions.append(t)
+                    current = self._apply_transition(current, new_state, now_ts, bar_close, t)
 
         if current.state == HypothesisState.TRIGGERED:
             # IMPORTANT: ne pas appliquer le BE sur la meme bougie que le trigger
@@ -263,6 +325,26 @@ class HypothesisEngine:
                     )
                     transitions.append(t)
                     current = replace(trail_updated, transitions=current.transitions + (t,), updated_at=now_ts)
+
+                # 3) Couche adaptative : laisser courir (EXTEND), verrouiller (TIGHTEN)
+                #    ou couper tot (EXIT_NOW) selon la conviction des features.
+                if self._adaptive_enabled:
+                    adapted = self._apply_adaptive_open(
+                        current, bar_close=bar_close, atr_val=atr_val
+                    )
+                    if adapted is not current and (
+                        adapted.target_price != current.target_price
+                        or adapted.invalidation_price != current.invalidation_price
+                    ):
+                        t = self._make_transition(
+                            current.state, current.state, now_ts, bar_close,
+                            "adaptive: gestion dynamique "
+                            f"(tgt={adapted.target_price:.4f} sl={adapted.invalidation_price:.4f})",
+                        )
+                        transitions.append(t)
+                        current = replace(
+                            adapted, transitions=current.transitions + (t,), updated_at=now_ts
+                        )
 
             new_state, exit_price, reason = self._eval_triggered(
                 current, bar_high=bar_high, bar_low=bar_low
@@ -296,6 +378,12 @@ class HypothesisEngine:
         if _invalidation_hit(h, close):
             return HypothesisState.INVALIDATED, "invalidation level hit before arming"
         if _breakout_confirmed(h, close, self._breakout_buf, body_ratio, self._min_breakout_body):
+            # FIX: re-verifier le filtre regime au moment du trigger.
+            # Une hypothese creee dans un regime favorable peut devenir counter-regime
+            # entre temps. On INVALIDATE plutot que de TRIGGER un trade contre-tendance.
+            ok, reason = self._still_passes_regime_filter(h)
+            if not ok:
+                return HypothesisState.INVALIDATED, f"regime-block at trigger: {reason}"
             return HypothesisState.TRIGGERED, (
                 f"breakout fired from forming (body_ratio={body_ratio:.2f})"
             )
@@ -309,10 +397,34 @@ class HypothesisEngine:
         if _invalidation_hit(h, close):
             return HypothesisState.INVALIDATED, "invalidation level hit before trigger (order cancelled)"
         if _breakout_confirmed(h, close, self._breakout_buf, body_ratio, self._min_breakout_body):
+            # FIX: re-verifier le filtre regime au moment du trigger.
+            # Bloque les hypotheses ARMED bullish dans un BEAR confirme (et vice-versa).
+            ok, reason = self._still_passes_regime_filter(h)
+            if not ok:
+                return HypothesisState.INVALIDATED, f"regime-block at trigger: {reason}"
             return HypothesisState.TRIGGERED, (
                 f"breakout confirmed (body_ratio={body_ratio:.2f} >= {self._min_breakout_body:.2f})"
             )
         return None, ""
+
+    def _still_passes_regime_filter(self, h: HypothesisDTO) -> tuple[bool, str]:
+        """Verifie que le pattern passe encore le filtre regime au moment du trigger.
+
+        Returns:
+            (True, "")  -> trade peut prendre place
+            (False, reason)  -> trade bloque, hypothese a invalider
+        """
+        if not self._regime_adaptive or self._market_regime is None:
+            return True, ""
+        from app.services.market_regime import pattern_regime_score
+        score = pattern_regime_score(h.pattern.kind.value, self._market_regime)
+        if score < self._regime_min_score:
+            return False, (
+                f"{h.pattern.kind.value} score={score:.2f} "
+                f"< min={self._regime_min_score:.2f} "
+                f"in regime {self._market_regime.trend} (strength={self._market_regime.strength:.2f})"
+            )
+        return True, ""
 
     def _eval_triggered(
         self, h: HypothesisDTO, *, bar_high: float, bar_low: float
@@ -437,12 +549,90 @@ class HypothesisEngine:
                 return False
         # Filtrage adaptatif au regime de marche : rejette les patterns
         # mal alignes avec le regime courant.
-        if self._regime_adaptive and self._market_regime is not None:
-            from app.services.market_regime import pattern_regime_score
-            score = pattern_regime_score(h.pattern.kind.value, self._market_regime)
-            if score < self._regime_min_score:
-                return False
+        if self._regime_adaptive:
+            if self._market_regime is None:
+                # Fail-closed : si on ne connait pas le regime, on rejette les
+                # patterns hautement directionnels pour eviter le scenario du
+                # 28/05 (336 CUP_AND_HANDLE LONG en marche BEAR).
+                if (
+                    self._reject_if_regime_unknown
+                    and h.pattern.kind.value in _HIGHLY_DIRECTIONAL_PATTERNS
+                ):
+                    return False
+            else:
+                from app.services.market_regime import pattern_regime_score
+                score = pattern_regime_score(h.pattern.kind.value, self._market_regime)
+                if score < self._regime_min_score:
+                    return False
         return True
+
+    # ------------------------------------------------------------------
+    # Couche adaptative (gestion dynamique par features continues)
+    # ------------------------------------------------------------------
+    def _adaptive_features(self, h: HypothesisDTO, bar_close: float):
+        """Calcule les features adaptatives pour l'hypothese ``h`` (ou None)."""
+        if not self._adaptive_enabled or self._adaptive_arrays is None:
+            return None
+        highs, lows, closes, volumes, opens = self._adaptive_arrays
+        if volumes is None or len(closes) < 6:
+            return None
+        from app.strategy.adaptive import compute_trade_features
+
+        entry = h.triggered_price if h.triggered_price is not None else h.entry_price
+        direction = 1 if h.side == Side.LONG else -1
+        # running_extreme approxime par le close courant -> mfe_progress = progres actuel.
+        return compute_trade_features(
+            highs, lows, closes, volumes, opens,
+            direction=direction, entry=float(entry), target=float(h.target_price),
+            running_extreme=float(bar_close),
+        )
+
+    def _apply_adaptive_open(
+        self, h: HypothesisDTO, *, bar_close: float, atr_val: float
+    ) -> HypothesisDTO:
+        """Applique la decision adaptative a une position TRIGGERED (renvoie un DTO modifie).
+
+        - EXIT_NOW      : exit immediat au close (cible/SL ramene au close selon le P&L)
+        - EXTEND_TARGET : repousse la cible de k*ATR (laisser courir)
+        - TIGHTEN_STOP  : rapproche le SL du close (verrouille le profit, jamais relacher)
+        """
+        from app.strategy.adaptive import ManageAction, decide_open
+
+        feats = self._adaptive_features(h, bar_close)
+        if feats is None:
+            return h
+        action = decide_open(feats)
+        is_long = h.side == Side.LONG
+        d = 1.0 if is_long else -1.0
+
+        if action == ManageAction.EXIT_NOW:
+            tag = "adaptive_exit"
+            entry = h.triggered_price if h.triggered_price is not None else h.entry_price
+            favorable = d * (bar_close - entry) > 0
+            tags = h.confluence_tags + (tag,) if tag not in h.confluence_tags else h.confluence_tags
+            # Favorable -> on ramene la cible au close (sortie TARGET_HIT) ; sinon le SL (STOPPED).
+            if favorable:
+                return replace(h, target_price=bar_close, confluence_tags=tags)
+            return replace(h, invalidation_price=bar_close, confluence_tags=tags)
+
+        if action == ManageAction.EXTEND_TARGET and atr_val > 0:
+            new_target = h.target_price + d * self._adaptive_extend_mult * atr_val
+            # N'etend jamais vers l'interieur (uniquement plus loin).
+            if (is_long and new_target > h.target_price) or (not is_long and new_target < h.target_price):
+                tags = h.confluence_tags + ("adaptive_extend",) if "adaptive_extend" not in h.confluence_tags else h.confluence_tags
+                return replace(h, target_price=new_target, confluence_tags=tags)
+
+        if action == ManageAction.TIGHTEN_STOP and atr_val > 0:
+            candidate = bar_close - d * self._adaptive_tighten_mult * atr_val
+            # Resserre uniquement (SL ne relache jamais).
+            if is_long and candidate > h.invalidation_price and candidate < bar_close:
+                tags = h.confluence_tags + ("adaptive_tighten",) if "adaptive_tighten" not in h.confluence_tags else h.confluence_tags
+                return replace(h, invalidation_price=candidate, confluence_tags=tags)
+            if not is_long and candidate < h.invalidation_price and candidate > bar_close:
+                tags = h.confluence_tags + ("adaptive_tighten",) if "adaptive_tighten" not in h.confluence_tags else h.confluence_tags
+                return replace(h, invalidation_price=candidate, confluence_tags=tags)
+
+        return h
 
     # ------------------------------------------------------------------
     # Helpers
@@ -457,16 +647,34 @@ class HypothesisEngine:
         tags: tuple[str, ...] = ()
         score = 0.0
         if self._confluence is not None:
-            score, tags = self._confluence.score(p, ohlcv)
+            score, tags = self._confluence.score(p, ohlcv, market_regime=self._market_regime)
+        # Stop/target initiaux ajustes a la volatilite (opt-in) : elargit le stop a
+        # >= k×ATR (corrige les stops trop serres, coef #1 du modele) et fixe le
+        # target a un RR constant. OFF par defaut (spawn_atr_stop_mult=0).
+        entry_price = p.breakout_level
+        invalidation_price = p.invalidation_level
+        if self._spawn_atr_stop_mult > 0.0:
+            from app.ml.risk import atr_trade_plan
+            plan = atr_trade_plan(
+                side=side.value,
+                entry=entry_price,
+                raw_invalidation=invalidation_price,
+                atr=_compute_atr(ohlcv, period=14),
+                k_stop=self._spawn_atr_stop_mult,
+                rr_target=(self._spawn_atr_target_rr or 2.0),
+            )
+            invalidation_price = plan.stop
+            if self._spawn_atr_target_rr > 0.0:
+                target = plan.target
         return HypothesisDTO(
             id=str(uuid.uuid4()),
             pattern=p,
             symbol=p.symbol,
             timeframe=p.timeframe,
             side=side,
-            entry_price=p.breakout_level,
+            entry_price=entry_price,
             target_price=target,
-            invalidation_price=p.invalidation_level,
+            invalidation_price=invalidation_price,
             state=HypothesisState.FORMING,
             created_at=now_ts,
             updated_at=now_ts,
@@ -534,14 +742,15 @@ class HypothesisEngine:
 class ConfluenceScorer:
     """Score 0-1 et tags de confluence pour une hypothèse.
 
-    Trois piliers, dans l'ordre d'importance pour des patterns chartistes :
+    Quatre piliers (v3 — apres analyse live 24h qui a montre que SMA50 local
+    sur 15m capte du bruit, et que trend_aligned correlait NEGATIVEMENT avec
+    le winrate sur ces 24h en BEAR) :
 
-    1. **Volume expansion** (le plus critique pour les breakouts) — ratio du volume de
-       la dernière bougie par rapport à la moyenne 20 bars. Une cassure sans volume
-       est l'indicateur n°1 de faux signal.
-    2. **HTF trend alignment** — pente d'une SMA 50 bars. Un pattern dans le sens du
-       trend supérieur a un meilleur winrate.
-    3. **Geometry confidence** (déjà calculé par le détecteur) — qualité du fit.
+    1. **Geometry confidence** — qualité du fit (deja calcule par le detecteur)
+    2. **Volume expansion** — ratio volume bougie / moy 20 bars
+    3. **HTF trend (SMA50 local)** — fallback quand le regime n'est pas fourni
+    4. **Market regime affinity** — pattern_regime_score si MarketRegime fourni.
+       Quand regime fourni, sa pondération domine le trend local (qui devient bruit).
     """
 
     def __init__(
@@ -551,9 +760,10 @@ class ConfluenceScorer:
         volume_weak_ratio: float = 0.7,
         trend_sma_period: int = 50,
         trend_slope_min: float = 0.0008,   # 0.08% par bar pour qualifier un trend
-        weight_geometry: float = 0.35,
-        weight_volume: float = 0.40,
-        weight_trend: float = 0.25,
+        weight_geometry: float = 0.30,
+        weight_volume: float = 0.30,
+        weight_trend_local: float = 0.10,  # SMA50 local : faible (bruit sur LTF)
+        weight_regime: float = 0.30,       # nouveau : affinite pattern x regime macro
     ) -> None:
         self._vol_strong = volume_strong_ratio
         self._vol_weak = volume_weak_ratio
@@ -561,10 +771,14 @@ class ConfluenceScorer:
         self._slope_min = trend_slope_min
         self._w_geo = weight_geometry
         self._w_vol = weight_volume
-        self._w_trend = weight_trend
+        self._w_trend = weight_trend_local
+        self._w_regime = weight_regime
 
     def score(
-        self, pattern: ChartPatternDTO, ohlcv: pd.DataFrame
+        self,
+        pattern: ChartPatternDTO,
+        ohlcv: pd.DataFrame,
+        market_regime=None,
     ) -> tuple[float, tuple[str, ...]]:
         tags: list[str] = []
         geo = float(pattern.confidence)
@@ -577,6 +791,21 @@ class ConfluenceScorer:
         if trend_tag:
             tags.append(trend_tag)
 
+        # Composante regime : si fournie, c'est le signal le plus discriminant
+        # (utilise BTC 1h plutot que la SMA50 locale, qui est trop bruitee sur 15m).
+        if market_regime is not None:
+            from app.services.market_regime import pattern_regime_score
+            raw = pattern_regime_score(pattern.kind.value, market_regime)
+            # Borne entre 0 et 1 : raw va de 0.3 (anti) a 1.3 (favorable),
+            # on normalise via (raw - 0.3) / 1.0 = (raw - 0.3) clip [0,1]
+            regime_score = max(0.0, min(1.0, raw - 0.3))
+            if raw >= 1.1:
+                tags.append("regime_favorable")
+            elif raw <= 0.5:
+                tags.append("regime_adverse")
+        else:
+            regime_score = 0.5  # neutre : ni boost ni penalize
+
         if pattern.breakout_direction != BreakoutDirection.UNDETERMINED:
             tags.append("directional_bias")
 
@@ -584,6 +813,7 @@ class ConfluenceScorer:
             self._w_geo * geo
             + self._w_vol * vol_score
             + self._w_trend * trend_score
+            + self._w_regime * regime_score
         )
         return round(min(1.0, max(0.0, composite)), 3), tuple(tags)
 
@@ -613,10 +843,11 @@ class ConfluenceScorer:
             return 0.5, ""
         s_now = float(sma.iloc[-1])
         s_prev = float(sma.iloc[-2])
-        ref = float(ohlcv["close"].iloc[-1])
-        if ref <= 0 or s_prev <= 0:
+        if s_prev <= 0:
             return 0.5, ""
-        slope_pct = (s_now - s_prev) / ref
+        # Pente relative a la SMA precedente (coherent avec market_regime.sma50_slope).
+        # Avant : division par le prix spot (ref) = non standard et incoherent.
+        slope_pct = (s_now - s_prev) / s_prev
         if abs(slope_pct) < self._slope_min:
             return 0.5, "trend_flat"
         is_up_trend = slope_pct > 0

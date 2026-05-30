@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
+from app.api.deps import ApiKeyDep
 from app.execution.router import get_executor, get_safety
 
 router = APIRouter(prefix="/execution", tags=["execution"])
 
 
 @router.get("/status")
-async def status() -> dict:
+async def status(_auth: ApiKeyDep) -> dict:
     """Status de l'executor actif + safety guards."""
     safety = get_safety()
     executor = await get_executor()
@@ -39,7 +40,7 @@ async def status() -> dict:
 
 
 @router.post("/emergency_stop")
-async def emergency_stop() -> dict:
+async def emergency_stop(_auth: ApiKeyDep) -> dict:
     """Ferme TOUTES les positions ouvertes immediatement (urgence).
 
     Trigger le killswitch pour empecher toute nouvelle ouverture.
@@ -59,7 +60,7 @@ async def emergency_stop() -> dict:
 
 
 @router.post("/reset_killswitch")
-async def reset_killswitch() -> dict:
+async def reset_killswitch(_auth: ApiKeyDep) -> dict:
     """Reset manuel du killswitch apres review humaine."""
     safety = get_safety()
     safety.reset_killswitch()
@@ -67,7 +68,7 @@ async def reset_killswitch() -> dict:
 
 
 @router.get("/safety")
-async def safety_status() -> dict:
+async def safety_status(_auth: ApiKeyDep) -> dict:
     safety = get_safety()
     return {
         "mode": safety.config.mode,

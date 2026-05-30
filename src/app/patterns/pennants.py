@@ -20,6 +20,7 @@ import numpy as np
 import pandas as pd
 
 from app.patterns._geometry import fit_line
+from app.patterns._indicators import atr_at, compute_atr
 from app.schemas.domain import SwingKind, SwingPoint
 from app.schemas.patterns import (
     BreakoutDirection, ChartPatternDTO, PatternKind,
@@ -31,6 +32,10 @@ _DEFAULT_PENNANT_MIN_BARS = 5
 _DEFAULT_PENNANT_MAX_BARS = 25
 _DEFAULT_PENNANT_MAX_RETRACE = 0.4      # <= 40% du pole retrace
 _DEFAULT_MIN_CONVERGENCE_RATIO = 1.5    # width_start / width_end >= 1.5
+# Live 24h : PENNANT_BEAR a SL 1.14% TP 11.4% (RR 38). 7-12% WR : le SL se fait
+# wick. On elargit d'au moins 1.5 ATR pour absorber le bruit.
+_DEFAULT_SL_ATR_MULT = 1.5
+_DEFAULT_ATR_PERIOD = 14
 
 
 class PennantDetector:
@@ -45,6 +50,8 @@ class PennantDetector:
         pennant_max_bars: int = _DEFAULT_PENNANT_MAX_BARS,
         pennant_max_retrace: float = _DEFAULT_PENNANT_MAX_RETRACE,
         min_convergence_ratio: float = _DEFAULT_MIN_CONVERGENCE_RATIO,
+        sl_atr_mult: float = _DEFAULT_SL_ATR_MULT,
+        atr_period: int = _DEFAULT_ATR_PERIOD,
     ) -> None:
         self._pole_min = pole_min_pct
         self._pole_max = pole_max_bars
@@ -52,6 +59,22 @@ class PennantDetector:
         self._penn_max = pennant_max_bars
         self._max_retrace = pennant_max_retrace
         self._min_conv = min_convergence_ratio
+        self._sl_atr_mult = float(sl_atr_mult)
+        self._atr_period = int(atr_period)
+
+    def _atr_buffered_invalidation(
+        self, ohlcv: pd.DataFrame, raw_invalidation: float, side_long: bool
+    ) -> float:
+        """Elargit le SL d'un multiple d'ATR (le SL structurel du triangle est trop serre)."""
+        if self._sl_atr_mult <= 0:
+            return raw_invalidation
+        atr_series = compute_atr(ohlcv, period=self._atr_period)
+        last_close = float(ohlcv["close"].iloc[-1])
+        atr_val = atr_at(atr_series, len(ohlcv) - 1, fallback_pct_of=last_close)
+        if atr_val <= 0:
+            return raw_invalidation
+        buf = atr_val * self._sl_atr_mult
+        return raw_invalidation - buf if side_long else raw_invalidation + buf
 
     def detect(
         self, ohlcv: pd.DataFrame, swings: list[SwingPoint],
@@ -130,7 +153,10 @@ class PennantDetector:
 
                     # OK, trouve. Genere le pattern.
                     breakout_level = float(upper.value_at(penn_end))
-                    invalidation = float(lower.value_at(penn_end))
+                    # SL : lower line + buffer ATR (sinon 1.14% en moyenne, wick instantane).
+                    invalidation = self._atr_buffered_invalidation(
+                        ohlcv, float(lower.value_at(penn_end)), side_long=True
+                    )
                     pole_length = pole_high - pole_low
                     target = breakout_level + pole_length
 
@@ -211,7 +237,9 @@ class PennantDetector:
                         continue
 
                     breakout_level = float(lower.value_at(penn_end))
-                    invalidation = float(upper.value_at(penn_end))
+                    invalidation = self._atr_buffered_invalidation(
+                        ohlcv, float(upper.value_at(penn_end)), side_long=False
+                    )
                     pole_length = pole_high - pole_low
                     target = breakout_level - pole_length
 

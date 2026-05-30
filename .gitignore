@@ -4,10 +4,40 @@ __pycache__/
 dist/
 build/
 .venv/
+
+# Secrets & environment
 .env
+.env.*
+*.env.bak
+*.env.*.bak
+
+# Local data / databases
 data/ohlcv/
+data/tg_bot.pid
+*.db
+*.db-journal
+*.db.bak
+
+# Runtime state (local-only, large)
+.runtime_control.json
+.runtime_control.json.lock
+.runtime_models.json
+recommendations.txt
+
+# Generated artifacts (datasets, trained models, local snapshots)
+models/
+data/ml/
+data/bitget_symbols.json
+data/safety_state.json
+backtest-prob-extracted.txt
+
+# Test / build caches
 .pytest_cache/
 .ruff_cache/
 *.egg
 .coverage
 htmlcov/
+
+# Logs
+logs/
+*.log

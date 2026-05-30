@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import delete
 
-from app.api.deps import SessionDep
+from app.api.deps import ApiKeyDep, SessionDep
 from app.db.models import Hypothesis, ScanRun, UnitTrade
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -14,6 +14,7 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 @router.post("/clean-db")
 async def clean_db(
     session: SessionDep,
+    _auth: ApiKeyDep,
     confirm: str = Query("", description="Doit valoir 'yes' pour proceder."),
     keep_universe: bool = Query(True, description="Garde exchanges/symbols/timeframes/candles"),
 ) -> dict:

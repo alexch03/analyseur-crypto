@@ -113,6 +113,7 @@ class SafetyGuard:
         Retourne (ok, reason). ok=False = refuser, reason explique pourquoi.
         """
         self._state = _ensure_today(self._state)
+        self._evaluate_killswitch()  # trip si un seuil est deja franchi
 
         if self._cfg.mode == "disabled":
             return False, "execution disabled (set EXECUTION_MODE in .env)"
@@ -142,29 +143,41 @@ class SafetyGuard:
         if balance_usd < self._cfg.min_balance_usd:
             return False, f"balance {balance_usd}$ < min {self._cfg.min_balance_usd}$"
 
-        if self._state.daily_pnl_usd <= -self._cfg.max_daily_loss_usd:
-            self._trip_killswitch(
-                f"daily loss {self._state.daily_pnl_usd:.2f}$ <= -{self._cfg.max_daily_loss_usd}$"
-            )
-            return False, "daily loss limit reached, killswitch tripped"
-
-        if self._state.consecutive_losses >= self._cfg.max_consecutive_losses:
-            self._trip_killswitch(
-                f"{self._state.consecutive_losses} consecutive losses"
-            )
-            return False, "consecutive loss limit reached, killswitch tripped"
-
         return True, ""
 
     def record_close(self, *, pnl_usd: float) -> None:
-        """Enregistre le PnL d'une cloture pour suivi killswitches."""
+        """Enregistre le PnL d'une cloture pour suivi killswitches.
+
+        IMPORTANT : le killswitch est evalue ICI (a chaque cloture), pas seulement
+        dans ``can_open``. Sinon il ne se declenche jamais en mode paper/disabled
+        (ou ``can_open`` court-circuite avant les seuils) — exactement le bug
+        observe : -598$ / 26 pertes consecutives sans declenchement.
+        """
         self._state = _ensure_today(self._state)
         self._state.daily_pnl_usd += pnl_usd
         if pnl_usd < 0:
             self._state.consecutive_losses += 1
         elif pnl_usd > 0:
             self._state.consecutive_losses = 0
+        self._evaluate_killswitch()
         _save_state(self._state)
+
+    def _evaluate_killswitch(self) -> None:
+        """Declenche le killswitch si un seuil de perte est franchi.
+
+        Independant du mode : on veut savoir qu'on AURAIT ete coupe meme en paper.
+        """
+        if self._state.killswitch_tripped:
+            return
+        if self._state.daily_pnl_usd <= -self._cfg.max_daily_loss_usd:
+            self._trip_killswitch(
+                f"daily loss {self._state.daily_pnl_usd:.2f}$ <= -{self._cfg.max_daily_loss_usd}$"
+            )
+        elif self._state.consecutive_losses >= self._cfg.max_consecutive_losses:
+            self._trip_killswitch(
+                f"{self._state.consecutive_losses} consecutive losses "
+                f">= {self._cfg.max_consecutive_losses}"
+            )
 
     def _trip_killswitch(self, reason: str) -> None:
         if not self._state.killswitch_tripped:

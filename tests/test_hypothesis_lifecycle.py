@@ -62,9 +62,31 @@ def _bear_pattern(symbol="TEST/USDT", timeframe="1h", end_idx=10) -> ChartPatter
     )
 
 
+def _engine(**kwargs) -> HypothesisEngine:
+    """Engine pour tester la machine à états en isolation.
+
+    Les filtres qualité de production sont neutralisés ici car ils sont orthogonaux
+    aux transitions d'état que ces tests vérifient :
+      - ``min_confluence_score`` : aucun ``ConfluenceScorer`` n'est injecté, donc
+        ``confluence_score=0.0`` et tout setup serait rejeté avant persistance.
+      - ``min_breakout_body_ratio`` : ``_bar_df`` génère des dojis (open==close →
+        body_ratio=0.0), ce qui bloquerait toute confirmation de breakout.
+      - ``reject_trend_counter`` : sans scorer il n'y a pas de tag ``trend_counter``,
+        on le désactive par cohérence.
+    Ces filtres ont leur propre couverture ailleurs.
+    """
+    params = dict(
+        min_confluence_score=0.0,
+        reject_trend_counter=False,
+        min_breakout_body_ratio=0.0,
+    )
+    params.update(kwargs)
+    return HypothesisEngine(**params)
+
+
 class TestHypothesisLifecycle:
     def test_forming_from_new_pattern(self):
-        engine = HypothesisEngine()
+        engine = _engine()
         df = _bar_df([105.0] * 11)  # close=105, breakout=110 → loin, donc FORMING
         result = engine.step(df, [_bull_pattern()], [])
 
@@ -77,7 +99,7 @@ class TestHypothesisLifecycle:
         assert h.invalidation_price == 100.0
 
     def test_forming_to_armed_on_proximity(self):
-        engine = HypothesisEngine(arm_proximity_pct=0.01)  # 1% proximity
+        engine = _engine(arm_proximity_pct=0.01)  # 1% proximity
         # Première itération : pattern détecté à close=105
         df1 = _bar_df([105.0] * 11)
         r1 = engine.step(df1, [_bull_pattern()], [])
@@ -90,7 +112,7 @@ class TestHypothesisLifecycle:
         assert updated.state == HypothesisState.ARMED
 
     def test_armed_to_triggered_on_breakout(self):
-        engine = HypothesisEngine(arm_proximity_pct=0.01)
+        engine = _engine(arm_proximity_pct=0.01)
         df1 = _bar_df([109.5] * 11)
         r1 = engine.step(df1, [_bull_pattern()], [])
         h = r1.created[0]
@@ -106,7 +128,7 @@ class TestHypothesisLifecycle:
     def test_armed_invalidated_cancels_order(self):
         """KEY TEST : si le prix casse l'invalidation AVANT trigger, l'hypothèse passe
         INVALIDATED (= ordre annulé) sans STOPPED."""
-        engine = HypothesisEngine(arm_proximity_pct=0.01)
+        engine = _engine(arm_proximity_pct=0.01)
         df1 = _bar_df([109.5] * 11)
         r1 = engine.step(df1, [_bull_pattern()], [])
         h = r1.created[0]
@@ -120,7 +142,7 @@ class TestHypothesisLifecycle:
         assert updated.triggered_at is None, "ne doit jamais avoir été triggered"
 
     def test_triggered_to_target_hit(self):
-        engine = HypothesisEngine(arm_proximity_pct=0.01)
+        engine = _engine(arm_proximity_pct=0.01)
         df1 = _bar_df([109.5] * 11)
         r1 = engine.step(df1, [_bull_pattern()], [])
         h0 = r1.created[0]
@@ -146,7 +168,7 @@ class TestHypothesisLifecycle:
         assert abs((h2.realized_pct or 0) - 8.108) < 0.01
 
     def test_triggered_to_stopped(self):
-        engine = HypothesisEngine(arm_proximity_pct=0.01)
+        engine = _engine(arm_proximity_pct=0.01)
         df1 = _bar_df([109.5] * 11)
         r1 = engine.step(df1, [_bull_pattern()], [])
 
@@ -164,7 +186,7 @@ class TestHypothesisLifecycle:
         assert h_stopped.outcome_price == 100.0
 
     def test_expiry_without_trigger(self):
-        engine = HypothesisEngine(arm_proximity_pct=0.005, expiry_bars=5)
+        engine = _engine(arm_proximity_pct=0.005, expiry_bars=5)
         df1 = _bar_df([105.0] * 11)  # pattern à end_index=10
         r1 = engine.step(df1, [_bull_pattern(end_idx=10)], [])
         h = r1.created[0]
@@ -177,7 +199,7 @@ class TestHypothesisLifecycle:
         assert r2.updated[0].state == HypothesisState.EXPIRED
 
     def test_short_bear_pattern_triggers_down(self):
-        engine = HypothesisEngine(arm_proximity_pct=0.015)
+        engine = _engine(arm_proximity_pct=0.015)
         # close=90.5 proche de 90 (breakout DOWN) — 0.56% au-dessus
         df1 = _bar_df([90.5] * 11)
         r1 = engine.step(df1, [_bear_pattern()], [])
@@ -192,7 +214,7 @@ class TestHypothesisLifecycle:
 
     def test_no_duplicate_hypothesis_on_repeated_detection(self):
         """Si le même pattern est re-détecté tick suivant, on n'en crée pas un 2e."""
-        engine = HypothesisEngine()
+        engine = _engine()
         df = _bar_df([105.0] * 11)
         r1 = engine.step(df, [_bull_pattern()], [])
         h = r1.created[0]
@@ -202,7 +224,7 @@ class TestHypothesisLifecycle:
         assert r2.created == []
 
     def test_symmetrical_pattern_does_not_spawn(self):
-        engine = HypothesisEngine()
+        engine = _engine()
         df = _bar_df([105.0] * 11)
         sym_pattern = ChartPatternDTO(
             kind=PatternKind.TRIANGLE_SYM,
@@ -221,3 +243,27 @@ class TestHypothesisLifecycle:
         )
         r = engine.step(df, [sym_pattern], [])
         assert r.created == [], "SYM non directionnel ne devrait pas spawner d'hypothèse"
+
+    def test_spawn_atr_stop_widens_tight_invalidation(self):
+        # ATR=1.0 sur ce df (high/low ±0.5). Pattern LONG breakout=110, stop serré=109.5.
+        # spawn_atr_stop_mult=2 -> stop élargi = 110 - 2×1 = 108.
+        engine = _engine(spawn_atr_stop_mult=2.0, arm_proximity_pct=0.01)
+        df = _bar_df([109.5] * 16)
+        p = ChartPatternDTO(
+            kind=PatternKind.TRIANGLE_ASC, symbol="TEST/USDT", timeframe="1h",
+            start_index=0, end_index=15,
+            start_timestamp=datetime(2025, 1, 1, tzinfo=UTC),
+            end_timestamp=datetime(2025, 1, 1, tzinfo=UTC) + timedelta(hours=15),
+            breakout_level=110.0, invalidation_level=109.5,
+            breakout_direction=BreakoutDirection.UP, height=10.0, target=120.0,
+            confidence=0.7,
+        )
+        h = engine.step(df, [p], []).created[0]
+        assert abs(h.invalidation_price - 108.0) < 1e-6
+
+    def test_spawn_atr_off_keeps_pattern_invalidation(self):
+        # spawn_atr_stop_mult défaut = 0 -> OFF -> stop = invalidation du pattern.
+        engine = _engine(arm_proximity_pct=0.01)
+        df = _bar_df([109.5] * 16)
+        h = engine.step(df, [_bull_pattern()], []).created[0]
+        assert h.invalidation_price == 100.0

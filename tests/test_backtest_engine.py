@@ -63,11 +63,30 @@ def test_atr_at_bar_positive():
     assert atr > 0
 
 
-def test_intrabar_conflict_prefers_tp_on_bullish_bar_long():
+def test_intrabar_conflict_conservative_sl_on_bullish_bar_long():
+    # Convention CONSERVATRICE (worst-case) : quand SL et TP sont tous deux dans
+    # la bougie, on resout le cote adverse (SL) en premier, meme si la bougie
+    # cloture haussiere. (Avant : biais optimiste 'bullish -> TP'.)
     oc, px = _resolve_intrabar_long(
         lo=99.0,
         hi=110.0,
         o=100.0,
+        c=108.0,
+        effective_sl=98.0,
+        tp=109.0,
+        entry=100.0,
+        trail_armed=False,
+    )
+    assert oc == "SL"
+    assert px == 98.0
+
+
+def test_intrabar_gap_open_above_tp_long_allows_tp():
+    # Exception gap : si l'open est deja >= TP, le 1er prix tradable est le TP.
+    oc, px = _resolve_intrabar_long(
+        lo=99.0,
+        hi=112.0,
+        o=110.0,      # open deja au-dessus du TP=109
         c=108.0,
         effective_sl=98.0,
         tp=109.0,
@@ -93,7 +112,9 @@ def test_intrabar_conflict_prefers_sl_on_bearish_bar_long():
     assert px == 97.5
 
 
-def test_intrabar_short_tp_on_bearish_bar():
+def test_intrabar_short_conservative_sl_on_bearish_bar():
+    # Convention CONSERVATRICE pour le SHORT : SL adverse resolu en premier meme
+    # sur bougie baissiere. (Avant : biais optimiste 'bearish -> TP short'.)
     oc, px = _resolve_intrabar_short(
         lo=90.0,
         hi=101.0,
@@ -104,8 +125,8 @@ def test_intrabar_short_tp_on_bearish_bar():
         entry=100.0,
         trail_armed=False,
     )
-    assert oc == "TP"
-    assert px == 88.0
+    assert oc == "SL"
+    assert px == 102.0
 
 
 def test_replay_engine_from_bt_cfg_disables_trail_with_zero():
