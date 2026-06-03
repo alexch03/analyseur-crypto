@@ -295,11 +295,16 @@ async def _run_backfill(args) -> None:
     print(f"Backfill fidele : {len(symbols)} symboles x {tfs}, {args.days}j calendaires/TF")
 
     fetcher = CCXTFetcher(settings.exchange_id)
-    # Timeline de regime : il faut couvrir TOUTE la fenetre rejouee (sinon regime=None
-    # sur les vieux trades). On fetch assez de bougies 1h pour args.days jours.
-    btc_limit = max(500, args.days * 24 + 120)
-    print(f"Fetch BTC/USDT 1h pour timeline de regime (limit={btc_limit})...")
-    btc_rows = await fetcher.fetch_ohlcv("BTC/USDT", "1h", limit=btc_limit)
+    # Timeline de regime : doit couvrir TOUTE la fenetre rejouee (sinon regime=None
+    # sur les vieux trades -> filtre contre-tendance inactif). Le fetch d'historique
+    # PROFOND est casse pour les TF fins (>~1200 bougies -> ~200 renvoyees, cf bug connu),
+    # donc pour les longues fenetres on construit la timeline depuis un TF COARSE
+    # (--regime-tf 4h/1d) qui couvre +de jours en -de bougies. Cap a 1000 (zone sure).
+    rtf = args.regime_tf
+    bpd = {"15m": 96, "1h": 24, "4h": 6, "1d": 1}.get(rtf, 24)
+    btc_limit = min(1000, max(300, args.days * bpd + 120))
+    print(f"Fetch BTC/USDT {rtf} pour timeline de regime (limit={btc_limit})...")
+    btc_rows = await fetcher.fetch_ohlcv("BTC/USDT", rtf, limit=btc_limit)
     btc_df = _rows_to_df(btc_rows)
     await fetcher.close()
     timeline = build_regime_timeline(btc_df)
@@ -436,6 +441,8 @@ async def main() -> int:
                     help="Historique en jours (mode --backfill, defaut 21)")
     ap.add_argument("--tfs", default="15m,1h,4h",
                     help="Timeframes a backfiller (virgule, defaut 15m,1h,4h)")
+    ap.add_argument("--regime-tf", default="1h", dest="regime_tf",
+                    help="TF pour la timeline de regime BTC (4h/1d pour longues fenetres, defaut 1h)")
     ap.add_argument("--symbols",
                     default="BTC/USDT,ETH/USDT,SOL/USDT,BNB/USDT,XRP/USDT,ADA/USDT,"
                             "AVAX/USDT,DOGE/USDT,LINK/USDT,DOT/USDT,LTC/USDT,ATOM/USDT",
