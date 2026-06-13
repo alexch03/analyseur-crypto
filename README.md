@@ -2,6 +2,10 @@
 
 # Analyseur Crypto
 
+<p align="center">
+  <img src="docs/img/hero.png" alt="Analyseur Crypto — FastAPI dashboard with paper trading, backtest and optimization tabs" width="900" />
+</p>
+
 A multi-timeframe **crypto market structure analyzer** for Bitget, written in
 Python, with a paper trading engine, a deterministic setup generator, a
 FastAPI dashboard, and a Telegram bot for live alerts and remote control.
