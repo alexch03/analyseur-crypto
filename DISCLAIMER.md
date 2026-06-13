@@ -1,3 +1,5 @@
+[🇬🇧 English](DISCLAIMER.md) | [🇫🇷 Français](DISCLAIMER.fr.md)
+
 # Disclaimer
 
 This project is a **research and analysis tool**. It is not financial advice.

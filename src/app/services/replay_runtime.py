@@ -1,4 +1,4 @@
-"""Configuration replay + résolution des frais (partagé API contrôle et paper live)."""
+"""Replay configuration + fee resolution (shared between control API and paper live)."""
 
 from __future__ import annotations
 

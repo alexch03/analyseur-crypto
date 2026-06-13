@@ -1,6 +1,6 @@
-"""Outils géométriques partagés entre détecteurs de patterns.
+"""Geometric utilities shared across pattern detectors.
 
-Tous internes au package patterns/ (préfixe `_`).
+All internal to the patterns/ package (`_` prefix).
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from app.schemas.patterns import TrendLine
 
 
 def fit_line(indices: list[int], prices: list[float]) -> TrendLine | None:
-    """Régression linéaire ordinaire ; retourne None si <2 points."""
+    """Ordinary linear regression; returns None if <2 points."""
     if len(indices) < 2 or len(indices) != len(prices):
         return None
     xs = np.asarray(indices, dtype=float)
@@ -39,19 +39,19 @@ def fit_line(indices: list[int], prices: list[float]) -> TrendLine | None:
 
 
 def slope_pct_per_bar(line: TrendLine, ref_price: float) -> float:
-    """Pente exprimée en % du prix de référence par bougie."""
+    """Slope expressed as % of reference price per candle."""
     if ref_price <= 0.0:
         return 0.0
     return line.slope / ref_price
 
 
 def is_flat(line: TrendLine, ref_price: float, *, tol_pct_per_bar: float) -> bool:
-    """Vrai si la pente est inférieure (en valeur absolue) à ``tol_pct_per_bar``."""
+    """True if the slope is lower (in absolute value) than ``tol_pct_per_bar``."""
     return abs(slope_pct_per_bar(line, ref_price)) <= tol_pct_per_bar
 
 
 def atr(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray, *, period: int = 14) -> float:
-    """ATR simple sur les ``period`` dernières barres ; 0 si pas assez de données."""
+    """Simple ATR over the last ``period`` bars; 0 if not enough data."""
     n = len(highs)
     if n < 2:
         return 0.0

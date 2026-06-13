@@ -1,4 +1,4 @@
-"""API analytics : breakdowns par pattern, tag, score, etc."""
+"""Analytics API: breakdowns by pattern, tag, score, etc."""
 
 from __future__ import annotations
 

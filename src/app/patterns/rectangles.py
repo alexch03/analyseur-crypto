@@ -1,20 +1,20 @@
-"""Détection de rectangles (range horizontal).
+"""Detection of rectangles (horizontal range).
 
-Géométrie :
-    - Support et résistance horizontaux ; les swings highs forment une bande étroite
-      autour d'un prix max, les swings lows autour d'un prix min.
-    - Au moins ``min_touches_per_side`` touches sur chaque ligne.
-    - La largeur de bande (max-min des highs / min-max des lows) doit rester
-      sous ``band_width_pct``.
-    - Pattern non encore cassé : close entre support et résistance.
+Geometry:
+    - Horizontal support and resistance; swing highs form a narrow band
+      around a max price, swing lows around a min price.
+    - At least ``min_touches_per_side`` touches on each line.
+    - The band width (max-min of highs / min-max of lows) must stay
+      below ``band_width_pct``.
+    - Pattern not yet broken: close between support and resistance.
 
-Target = hauteur du rectangle projetée à partir du niveau cassé (UNDETERMINED par défaut,
-on n'a pas de biais directionnel a priori — l'hypothesis_engine ne spawnera pas tant
-qu'on ne sait pas dans quel sens il va casser).
+Target = rectangle height projected from the broken level (UNDETERMINED by default,
+we have no a priori directional bias — the hypothesis_engine will not spawn until
+we know which way it will break).
 
-Pour gérer un rectangle qui propose deux scénarios (UP et DOWN), on peut émettre
-deux variantes : ici on émet **une seule** entrée avec direction UNDETERMINED, et c'est
-l'engine qui watch les deux bornes au moment du breakout réel.
+To handle a rectangle that proposes two scenarios (UP and DOWN), we could emit
+two variants: here we emit **one** entry with UNDETERMINED direction, and the
+engine watches both bounds at the actual breakout.
 """
 
 from __future__ import annotations

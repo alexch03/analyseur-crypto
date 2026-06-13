@@ -1,4 +1,4 @@
-"""RSI et divergences simples (dernières bougies) pour filtre / score."""
+"""RSI and simple divergences (recent candles) for filter / score."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import pandas as pd
 
 
 def compute_rsi(close: pd.Series, period: int = 14) -> pd.Series:
-    """RSI type Wilder (EMA sur gains / pertes)."""
+    """Wilder-style RSI (EMA on gains / losses)."""
     c = close.astype(float)
     delta = c.diff()
     gain = delta.clip(lower=0.0)
@@ -46,7 +46,7 @@ def rsi_bullish_divergence_recent(
     swing_order: int = 2,
     rsi_period: int = 14,
 ) -> bool:
-    """Dernière fenêtre : deux creux prix avec LL sur le prix et HL sur le RSI."""
+    """Most recent window: two price lows with LL on price and HL on RSI."""
     if len(ohlcv) < lookback + rsi_period + swing_order * 2 + 2:
         return False
     lows = ohlcv["low"].to_numpy(dtype=float)
@@ -72,7 +72,7 @@ def rsi_bearish_divergence_recent(
     swing_order: int = 2,
     rsi_period: int = 14,
 ) -> bool:
-    """Dernière fenêtre : deux sommets prix avec HH sur le prix et LH sur le RSI."""
+    """Most recent window: two price highs with HH on price and LH on RSI."""
     if len(ohlcv) < lookback + rsi_period + swing_order * 2 + 2:
         return False
     highs = ohlcv["high"].to_numpy(dtype=float)

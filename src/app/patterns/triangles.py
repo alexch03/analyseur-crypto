@@ -1,19 +1,19 @@
-"""Détection de triangles : ascendant, descendant, symétrique.
+"""Detection of triangles: ascending, descending, symmetrical.
 
-Géométrie :
-    ASC   — résistance horizontale (highs aplatis) + support ascendant (lows montants)
-    DESC  — support horizontal (lows aplatis) + résistance descendante (highs baissants)
-    SYM   — highs descendants + lows ascendants (convergence sans biais directionnel)
+Geometry:
+    ASC   — horizontal resistance (flattened highs) + ascending support (rising lows)
+    DESC  — horizontal support (flattened lows) + descending resistance (falling highs)
+    SYM   — descending highs + ascending lows (convergence with no directional bias)
 
-Conditions de validité :
-    - Au moins ``min_pivots_per_side`` swings de chaque côté (default 2)
-    - R² des deux droites >= ``min_r_squared``
-    - Convergence : l'apex (intersection) est dans le futur proche (1 → ~max_apex_dist bougies)
-      ou déjà dépassé légèrement (cas SYM tardif)
-    - Pattern non encore cassé : dernière clôture entre les deux lignes (avec tolérance)
+Validity conditions:
+    - At least ``min_pivots_per_side`` swings on each side (default 2)
+    - R^2 of both lines >= ``min_r_squared``
+    - Convergence: the apex (intersection) is in the near future (1 -> ~max_apex_dist bars)
+      or has slightly passed (late SYM case)
+    - Pattern not yet broken: last close between the two lines (with tolerance)
 
-Target = hauteur initiale du triangle projetée à partir du niveau de cassure.
-Invalidation = ligne opposée au sens de cassure attendu, au niveau présent.
+Target = initial triangle height projected from the breakout level.
+Invalidation = line opposite to the expected breakout direction, at the current level.
 """
 
 from __future__ import annotations

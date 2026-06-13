@@ -1,17 +1,17 @@
-"""Détection de wedges (WEDGE_RISING / WEDGE_FALLING).
+"""Detection of wedges (WEDGE_RISING / WEDGE_FALLING).
 
-Géométrie :
-    Rising wedge — biais baissier :
-        - Highs ET lows ascendants, MAIS les lows montent plus vite que les highs.
-        - Les lignes convergent vers le haut, apex en avant.
-        - Cassure attendue par la **base** → BreakoutDirection.DOWN.
-    Falling wedge — biais haussier :
-        - Highs ET lows descendants, MAIS les highs descendent plus vite que les lows.
-        - Convergent vers le bas, apex en avant.
-        - Cassure attendue par le **toit** → BreakoutDirection.UP.
+Geometry:
+    Rising wedge — bearish bias:
+        - Highs AND lows are rising, BUT lows rise faster than highs.
+        - Lines converge upward, apex ahead.
+        - Expected breakout through the **base** -> BreakoutDirection.DOWN.
+    Falling wedge — bullish bias:
+        - Highs AND lows are falling, BUT highs fall faster than lows.
+        - Lines converge downward, apex ahead.
+        - Expected breakout through the **roof** -> BreakoutDirection.UP.
 
-Target classique = retour au niveau de départ du wedge (price action retrace toute la
-formation).
+Classical target = return to the starting level of the wedge (price action retraces
+the whole formation).
 """
 
 from __future__ import annotations

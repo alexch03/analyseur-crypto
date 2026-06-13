@@ -1,17 +1,17 @@
-"""Spécification des variables (features) du modèle de sélection de trades.
+"""Feature specification for the trade-selection model.
 
-Source unique de vérité partagée entre :
-  - la construction du dataset offline (``dataset.py``),
-  - l'entraînement (``model.py``),
-  - l'inférence live dans le moteur (phase 5).
+Single source of truth shared between:
+  - offline dataset construction (``dataset.py``),
+  - training (``model.py``),
+  - live inference inside the engine (phase 5).
 
-Toute feature déclarée ici est automatiquement prise en compte par le pipeline
-sklearn (cf. ``model.build_pipeline``). On distingue trois familles, traitées
-différemment par le préprocesseur :
+Every feature declared here is automatically picked up by the sklearn
+pipeline (see ``model.build_pipeline``). Three families are distinguished,
+each handled differently by the preprocessor:
 
-  - NUMERIC      : imputées (médiane) puis standardisées.
-  - CATEGORICAL  : one-hot encodées (chaque modalité = une variable indépendante).
-  - BINARY       : 0/1 déjà prêtes (tags de confluence, drapeaux).
+  - NUMERIC      : imputed (median) then standardised.
+  - CATEGORICAL  : one-hot encoded (each modality = one independent variable).
+  - BINARY       : already 0/1 (confluence tags, flags).
 """
 
 from __future__ import annotations
@@ -21,8 +21,8 @@ import json
 from app.ml.indicators import INDICATOR_OHLCV
 
 # ---------------------------------------------------------------------------
-# Tags de confluence informatifs.
-# `directional_bias` est présent sur 100 % des trades -> variance nulle -> exclu.
+# Informative confluence tags.
+# `directional_bias` is present on 100% of trades -> zero variance -> excluded.
 # ---------------------------------------------------------------------------
 CONFLUENCE_TAGS: list[str] = [
     "volume_weak",

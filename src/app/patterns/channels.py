@@ -1,18 +1,18 @@
-"""Détection de canaux parallèles inclinés (CHANNEL_UP / CHANNEL_DOWN).
+"""Detection of inclined parallel channels (CHANNEL_UP / CHANNEL_DOWN).
 
-Géométrie :
-    - Deux lignes inclinées de pentes **de même signe** et **quasi-égales**
-      (slopes_diff_pct ≤ tolérance).
-    - Au moins ``min_pivots_per_side`` swings de chaque côté.
-    - R² élevé sur les deux lignes.
+Geometry:
+    - Two inclined lines with **same-signed** and **near-equal** slopes
+      (slopes_diff_pct <= tolerance).
+    - At least ``min_pivots_per_side`` swings on each side.
+    - High R^2 on both lines.
 
-Sens de cassure indéterminé : un canal peut casser de chaque côté. On confie au
-moteur d'hypothèse le choix du sens lors du breakout réel — ici on émet une
-entrée UNDETERMINED avec ``breakout_level`` = ligne dans le sens du trend (cap)
-et ``invalidation_level`` = ligne opposée (un break-out classique vise la cassure
-horizontale dans le sens du trend).
+Breakout direction is undetermined: a channel can break either way. The choice
+is delegated to the hypothesis engine at the real breakout — here we emit an
+UNDETERMINED entry with ``breakout_level`` = line in the trend direction (cap)
+and ``invalidation_level`` = opposite line (a classical breakout targets the
+horizontal break in the trend direction).
 
-Target = projection de la largeur du canal au point de cassure (= height).
+Target = projection of the channel width at the breakout point (= height).
 """
 
 from __future__ import annotations

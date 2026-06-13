@@ -1,17 +1,17 @@
-"""Modèle de prédiction P(gagnant) à partir de plusieurs variables indépendantes.
+"""Prediction model P(winner) from multiple independent variables.
 
-Deux modèles interchangeables :
+Two interchangeable models:
 
-  - ``logreg`` : régression logistique régularisée (L2). **Interprétable** : chaque
-    coefficient = contribution signée d'une variable -> répond à « quelles variables
-    indépendantes comptent ». Robuste sur petit échantillon.
-  - ``gbm`` : HistGradientBoosting (non linéaire, interactions). Comparateur de
-    puissance ; sur-apprend plus facilement sur peu de données.
+  - ``logreg``: L2-regularised logistic regression. **Interpretable**: each
+    coefficient = signed contribution of a variable -> answers "which
+    independent variables matter". Robust on a small sample.
+  - ``gbm``: HistGradientBoosting (non-linear, interactions). Power comparator;
+    overfits more easily on little data.
 
-Le préprocesseur (ColumnTransformer) impute, standardise les numériques et
-one-hot encode les catégorielles : chaque modalité devient une variable
-indépendante du modèle. C'est volontairement la MÊME spec (features.py) en
-offline et en live, pour éviter tout décalage train/serve.
+The preprocessor (ColumnTransformer) imputes, standardises numericals and
+one-hot encodes categoricals: each modality becomes one independent variable
+in the model. It is deliberately the SAME spec (features.py) offline and
+live, to avoid any train/serve skew.
 """
 
 from __future__ import annotations

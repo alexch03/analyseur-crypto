@@ -1,4 +1,4 @@
-"""Filtres optionnels sur les setups (IFVG, RSI divergence)."""
+"""Optional filters on setups (IFVG, RSI divergence)."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""API regime de marche : current + historique."""
+"""Market regime API: current + history."""
 
 from __future__ import annotations
 

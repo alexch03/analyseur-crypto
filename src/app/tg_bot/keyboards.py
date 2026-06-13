@@ -1,4 +1,4 @@
-"""Menus inline pour le bot Telegram."""
+"""Inline menus for the Telegram bot."""
 
 from __future__ import annotations
 

@@ -1,8 +1,12 @@
+[🇬🇧 English](README.md) | [🇫🇷 Français](README.fr.md)
+
 # Analyseur Crypto
 
-A multi-timeframe crypto market structure analyzer for Bitget, with a paper
-trading engine, a deterministic setup generator, a FastAPI dashboard, and a
-Telegram bot for live alerts and remote control.
+A multi-timeframe **crypto market structure analyzer** for Bitget, written in
+Python, with a paper trading engine, a deterministic setup generator, a
+FastAPI dashboard, and a Telegram bot for live alerts and remote control.
+Smart-money-concepts toolkit (BOS / CHOCH / FVG / order block detection) +
+classical chart patterns, all rule-based and unit-tested.
 
 The project sits between "trading bot" and "research lab": setups are produced
 by transparent rules (no opaque model), every backtest is reproducible, and

@@ -1,31 +1,31 @@
-"""Détecteurs de patterns de retournement : Double Top / Bottom + H&S / iH&S.
+"""Reversal pattern detectors: Double Top / Bottom + H&S / iH&S.
 
-Géométrie :
-    Double top (bearish reversal) :
-        - 2 swing highs proches en prix (|Δ| <= ``twin_tol_pct``)
-        - 1 swing low entre les deux = neckline
-        - Cassure attendue sous la neckline → DOWN
-        - Target = (avg_highs − neckline) projetée sous la neckline
-        - Invalidation = nouveau plus haut au-dessus des sommets
+Geometry:
+    Double top (bearish reversal):
+        - 2 swing highs close in price (|delta| <= ``twin_tol_pct``)
+        - 1 swing low between them = neckline
+        - Expected breakout below the neckline -> DOWN
+        - Target = (avg_highs - neckline) projected below the neckline
+        - Invalidation = new high above the tops
 
-    Double bottom : miroir.
+    Double bottom: mirror image.
 
-    Head & Shoulders (bearish) :
-        - 3 swing highs avec head > épaules ; épaules à peu près au même prix
-        - 2 swing lows entre eux = neckline (régression linéaire entre les 2 lows)
-        - Cassure attendue sous la neckline
-        - Target = (head − neckline_at_break) projeté sous la neckline
+    Head & Shoulders (bearish):
+        - 3 swing highs with head > shoulders; shoulders roughly at the same price
+        - 2 swing lows between them = neckline (linear regression between the 2 lows)
+        - Expected breakout below the neckline
+        - Target = (head - neckline_at_break) projected below the neckline
 
-    Inverse H&S : miroir.
+    Inverse H&S: mirror image.
 
-Qualité v2 (issue de l'analyse trades) :
-    - Trend context PRE-pattern : pour qu'un retournement soit valide, il faut
-      qu'il y ait quelque chose à retourner. DOUBLE_TOP = exige uptrend AVANT,
-      DOUBLE_BOTTOM = exige downtrend AVANT.
-    - Validité des sommets : le swing high doit avoir un close dans le tiers
-      supérieur de la bougie (pas juste un wick).
-    - Espacement minimum entre swings : evite les patterns trop serrés (noise).
-    - Swing prominence : filtre les micro-swings sous ATR * threshold.
+Quality v2 (from trade analysis):
+    - PRE-pattern trend context: for a reversal to be valid, there must be
+      something to reverse. DOUBLE_TOP = requires an uptrend BEFORE,
+      DOUBLE_BOTTOM = requires a downtrend BEFORE.
+    - Top validity: the swing high must have a close in the upper third
+      of the candle (not just a wick).
+    - Minimum spacing between swings: avoids patterns that are too tight (noise).
+    - Swing prominence: filters out micro-swings below ATR * threshold.
 """
 
 from __future__ import annotations
@@ -90,7 +90,7 @@ _DEFAULT_VWAP_PERIOD = 96               # VWAP rolling sur 1 jour (15m x 96 = 1d
 
 @dataclass
 class _IndicatorContext:
-    """Indicateurs precalcules pour eviter le recalcul a chaque detection."""
+    """Precomputed indicators to avoid recomputation on every detection."""
     rsi: np.ndarray | None = None
     vwap: np.ndarray | None = None
     volumes: np.ndarray | None = None
@@ -164,7 +164,7 @@ class ReversalDetector:
 
     def _swing_is_prominent(self, ohlcv: pd.DataFrame, swing: SwingPoint,
                             atr_val: float) -> bool:
-        """Le swing doit dépasser ses voisins d'au moins min_prom_atr × ATR."""
+        """The swing must exceed its neighbours by at least min_prom_atr × ATR."""
         if atr_val <= 0 or self._min_swing_prom_atr <= 0:
             return True
         i = swing.index

@@ -1,4 +1,4 @@
-"""API routes pour les hypothèses de patterns chartistes."""
+"""API routes for chart pattern hypotheses."""
 
 from __future__ import annotations
 

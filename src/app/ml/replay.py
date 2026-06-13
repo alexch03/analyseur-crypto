@@ -1,14 +1,14 @@
-"""Générateur de dataset par replay historique (chantier #3).
+"""Dataset generator via historical replay (workstream #3).
 
-Rejoue les détecteurs de patterns sur un OHLCV historique, simule chaque trade
-avec des stops ATR (#2), enregistre les features (#1) au moment de la détection,
-et étiquette l'issue (TARGET_HIT / STOPPED). Produit un dataset multi-régimes —
-la donnée diverse qui manque (la DB live ne couvre que 24h d'un seul régime BEAR
-et est contaminée par des runs pré-fix).
+Replays the pattern detectors on a historical OHLCV, simulates each trade
+with ATR stops (#2), records features (#1) at detection time, and labels
+the outcome (TARGET_HIT / STOPPED). Produces a multi-regime dataset — the
+diverse data we are missing (the live DB only covers 24h of a single BEAR
+regime and is contaminated by pre-fix runs).
 
-Sortie compatible avec ``dataset.engineer_features`` / ``model`` / ``evaluate``.
+Output compatible with ``dataset.engineer_features`` / ``model`` / ``evaluate``.
 
-Lancer :  .venv/Scripts/python.exe scripts/ml_replay.py
+Run:  .venv/Scripts/python.exe scripts/ml_replay.py
 """
 
 from __future__ import annotations

@@ -1,17 +1,18 @@
-"""Détection de Flags (et Pennants) post-impulsion.
+"""Detection of Flags (and Pennants) after an impulse.
 
-Géométrie :
-    Bull flag :
-        1. **Pole** : mouvement directionnel haussier ≥ ``pole_min_pct`` en ≤ ``pole_max_bars``.
-        2. **Flag** : consolidation latérale ou légèrement baissière sur ``flag_min_bars`` à
-           ``flag_max_bars`` bougies, restant entre ``flag_max_retrace`` du pole.
-        3. Breakout attendu vers le haut au niveau de résistance de la consolidation.
-        4. Target = hauteur du pole projetée depuis le breakout.
+Geometry:
+    Bull flag:
+        1. **Pole**: upside directional move >= ``pole_min_pct`` in <= ``pole_max_bars``.
+        2. **Flag**: sideways or slightly bearish consolidation over ``flag_min_bars`` to
+           ``flag_max_bars`` candles, staying within ``flag_max_retrace`` of the pole.
+        3. Expected breakout upward at the resistance level of the consolidation.
+        4. Target = pole height projected from the breakout.
 
-    Bear flag : miroir.
+    Bear flag: mirror image.
 
-On accepte aussi bien un rectangle qu'un léger triangle (pennant) en consolidation,
-sans les distinguer ici — la simple validation "highs et lows dans une bande" suffit.
+We accept both a rectangle and a slight triangle (pennant) as consolidation,
+without distinguishing them here — the simple "highs and lows within a band"
+check is enough.
 """
 
 from __future__ import annotations
@@ -109,7 +110,7 @@ class FlagDetector:
     def _find_pole_ending_at(
         self, closes: np.ndarray, *, pole_end_idx: int
     ) -> _Pole | None:
-        """Pole ``pole_end_idx`` = sommet/creux. Cherche extremum opposé dans la fenêtre."""
+        """Pole ``pole_end_idx`` = high/low. Look for the opposite extremum in the window."""
         if pole_end_idx < 1:
             return None
 

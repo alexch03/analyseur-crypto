@@ -1,4 +1,4 @@
-"""Config bot Telegram - lit .env (TELEGRAM_BOT_TOKEN, TELEGRAM_ADMIN_CHAT_ID)."""
+"""Telegram bot config - reads .env (TELEGRAM_BOT_TOKEN, TELEGRAM_ADMIN_CHAT_ID)."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""API routes pour le tracker paper unit-based (% cumul)."""
+"""API routes for the unit-based paper tracker (cumulative %)."""
 
 from __future__ import annotations
 
